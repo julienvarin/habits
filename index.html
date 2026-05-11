@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#0b0d10" />
+  <meta name="theme-color" content="#0f1117" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Habits" />
@@ -14,27 +14,36 @@
   <title>Habits</title>
 </head>
 <body>
-  <main id="app">
-    <header class="topbar">
-      <h1 id="page-title">Today</h1>
-      <span id="date-label"></span>
+  <div id="app">
+    <header class="topbar" id="topbar">
+      <div class="topbar-row1">
+        <h1 id="page-title">Today</h1>
+        <span id="date-label"></span>
+      </div>
+      <div id="progress-area"></div>
     </header>
 
-    <section id="view-today" class="view active"></section>
+    <section id="view-today"   class="view active"></section>
     <section id="view-history" class="view"></section>
-    <section id="view-stats" class="view"></section>
+    <section id="view-stats"   class="view"></section>
 
     <button id="fab" aria-label="Add habit">+</button>
 
-    <nav class="tabs">
-      <button class="tab active" data-view="today"><span>✓</span>Today</button>
-      <button class="tab" data-view="history"><span>▦</span>History</button>
-      <button class="tab" data-view="stats"><span>↗</span>Stats</button>
+    <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab active" data-view="today"   role="tab" aria-selected="true">
+        <span class="tab-icon">✓</span>Today
+      </button>
+      <button class="tab" data-view="history" role="tab" aria-selected="false">
+        <span class="tab-icon">▦</span>History
+      </button>
+      <button class="tab" data-view="stats"   role="tab" aria-selected="false">
+        <span class="tab-icon">↗</span>Stats
+      </button>
     </nav>
 
-    <div id="modal-root"></div>
-    <div id="toast"></div>
-  </main>
+    <div id="modal-root" role="dialog" aria-modal="true"></div>
+    <div id="toast"      role="status" aria-live="polite"></div>
+  </div>
 
   <script src="config.js"></script>
   <script src="supabase.js"></script>
