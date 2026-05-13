@@ -31,11 +31,13 @@
     listEntries() {
       return req("/entries?select=habit_id,date&order=date.asc", { headers: headers() });
     },
-    addHabit(name, color, sort_order) {
+    addHabit(name, color, sort_order, section) {
+      const body = { name, color, sort_order };
+      if (section) body.section = section;
       return req("/habits", {
         method: "POST",
         headers: headers({ Prefer: "return=representation" }),
-        body: JSON.stringify({ name, color, sort_order }),
+        body: JSON.stringify(body),
       }).then(arr => arr[0]);
     },
     updateHabit(id, patch) {

@@ -4,10 +4,14 @@ create table if not exists habits (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   color text not null default '#22c55e',
+  section text,
   sort_order int not null default 0,
   archived boolean not null default false,
   created_at timestamptz not null default now()
 );
+
+-- Migration: add section column if table already exists
+alter table habits add column if not exists section text;
 
 create table if not exists entries (
   id uuid primary key default gen_random_uuid(),
