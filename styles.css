@@ -451,3 +451,116 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 ::-webkit-scrollbar { width: 6px; height: 6px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border-hi); border-radius: 99px; }
+
+/* ============================================================
+   DASHBOARD WIDGETS
+============================================================ */
+#dash-root { padding: 0 0 2px; }
+
+/* Year progress strip */
+.dash-year {
+  padding: 10px 2px 14px;
+}
+.dash-year-meta {
+  display: flex; align-items: center; gap: 8px;
+  margin-bottom: 7px; font-size: 12px;
+}
+.dash-year-tag {
+  font-size: 11px; font-weight: 700; color: var(--fg-2);
+  background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: 5px; padding: 2px 7px; flex-shrink: 0;
+}
+.dash-year-info { color: var(--fg-dim); flex: 1; }
+.dash-year-pct  { font-weight: 700; color: var(--fg-2); font-variant-numeric: tabular-nums; }
+.dash-year-track {
+  height: 5px; border-radius: 99px;
+  background: var(--border); overflow: hidden;
+}
+.dash-year-fill {
+  height: 100%; border-radius: 99px;
+  background: linear-gradient(90deg, var(--accent), #30d158);
+  transition: width 1s cubic-bezier(.22,1,.36,1);
+}
+
+/* Widget row */
+.dash-row {
+  display: flex; gap: 10px; align-items: flex-start;
+  margin-bottom: 18px;
+}
+
+/* Base widget card */
+.dash-widget {
+  background: var(--bg-card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  padding: 12px 13px;
+  box-shadow: var(--shadow-sm);
+  flex: 1; min-width: 0;
+  font-size: 13px;
+}
+.dw-news-widget { flex: 2; }
+
+/* Shared label */
+.dw-lbl {
+  font-size: 10px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: 0.07em;
+  color: var(--fg-dim); margin-bottom: 7px;
+}
+.dw-lbl2 { margin-top: 11px; }
+
+/* Loading spinner inside widget */
+.dw-spin-wrap { display: flex; justify-content: center; padding: 10px 0; }
+.dw-spin {
+  width: 16px; height: 16px;
+  border: 2px solid var(--border); border-top-color: var(--accent);
+  border-radius: 50%; animation: spin 0.7s linear infinite;
+}
+
+/* Error / empty */
+.dw-err   { font-size: 12px; color: var(--fg-dim); }
+.dw-empty { font-size: 12px; color: var(--fg-dim); font-style: italic; }
+
+/* ── Weather ── */
+.dw-wx-icon { font-size: 26px; line-height: 1; margin: 3px 0 5px; }
+.dw-temps   { display: flex; align-items: center; gap: 4px; font-size: 15px; font-weight: 700; margin-bottom: 5px; }
+.dw-hi  { color: #ff6723; }
+.dw-sep { color: var(--border-hi); }
+.dw-lo  { color: #007aff; }
+.dw-rain      { font-size: 11px; color: var(--fg-dim); }
+.dw-rain-hi   { color: #007aff; font-weight: 600; }
+
+/* ── Meetings / calendar ── */
+.dw-evt {
+  display: flex; align-items: baseline; gap: 5px;
+  margin-bottom: 5px; line-height: 1.3;
+}
+.dw-evt-t {
+  font-size: 10px; color: var(--fg-dim); white-space: nowrap;
+  font-variant-numeric: tabular-nums; flex-shrink: 0;
+}
+.dw-evt-n {
+  font-size: 12px; font-weight: 500; color: var(--fg-2);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.dw-cal-hint {
+  font-size: 11px; color: var(--fg-dim); line-height: 1.5;
+  margin-top: 4px;
+}
+
+/* ── News ── */
+.dw-news-cols { display: flex; gap: 12px; }
+.dw-news-col  { flex: 1; min-width: 0; }
+.dw-news-a {
+  display: block; font-size: 11px; color: var(--fg-2);
+  text-decoration: none; line-height: 1.45;
+  margin-bottom: 7px;
+  display: -webkit-box; -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical; overflow: hidden;
+}
+.dw-news-a:hover { color: var(--accent); }
+
+/* Responsive: stack news to full width on small screens */
+@media (max-width: 479px) {
+  .dash-row { flex-wrap: wrap; }
+  .dw-news-widget { flex: 1 1 100%; }
+}

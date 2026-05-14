@@ -72,11 +72,13 @@
   // ============================================================
   async function load() {
     if (!window.SUPABASE_URL || window.SUPABASE_URL.startsWith('REPLACE_ME')) {
-      document.getElementById('view-today').innerHTML = setupBanner();
+      document.getElementById('habits-root').innerHTML = setupBanner();
+      if (window.renderDashboard) window.renderDashboard();
       return;
     }
 
-    showLoader('view-today');
+    showLoader('habits-root');
+    if (window.renderDashboard) window.renderDashboard();
 
     try {
       const [habits, entries] = await Promise.all([db.listHabits(), db.listEntries()]);
@@ -87,7 +89,7 @@
       flushQueue();
     } catch (err) {
       console.error(err);
-      document.getElementById('view-today').innerHTML = `
+      document.getElementById('habits-root').innerHTML = `
         <div class="empty">
           <div class="empty-icon">⚠️</div>
           <h2>Couldn't connect</h2>
@@ -272,7 +274,7 @@
   }
 
   function renderToday() {
-    const root  = document.getElementById('view-today');
+    const root  = document.getElementById('habits-root');
     if (state.loading) return;
     const today = todayStr();
 
