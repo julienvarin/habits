@@ -903,7 +903,7 @@
 
   async function fetchBerlinEvents() {
     try {
-      morningState.events = await fetchRSSFeed('https://exberliner.com/feed/', 5);
+      morningState.events = await fetchRSSFeed('https://feeds.thelocal.com/rss/de', 5);
     } catch (err) {
       morningState.eventsErr = err.message;
     }
@@ -1090,7 +1090,7 @@
           ${newsBody}
         </div>
         <div class="morning-card">
-          <div class="morning-card-title">Berlin Events</div>
+          <div class="morning-card-title">Germany / Berlin</div>
           ${eventsBody}
         </div>
       </div>`;
