@@ -855,12 +855,20 @@
   }
 
   async function fetchRSSFeed(rssUrl, count) {
-    const url  = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=${count || 5}`;
-    const resp = await fetch(url);
+    const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`;
+    const resp  = await fetch(proxy);
     if (!resp.ok) throw new Error(`RSS ${resp.status}`);
-    const data = await resp.json();
-    if (data.status !== 'ok') throw new Error('RSS parse failed');
-    return data.items;
+    const xml = await resp.text();
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    return [...doc.querySelectorAll('item')].slice(0, count || 5).map(el => {
+      const text = sel => el.querySelector(sel)?.textContent?.trim() || '';
+      const raw  = text('pubDate');
+      const d    = raw ? new Date(raw) : null;
+      const pubDate = d && !isNaN(d)
+        ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+        : '';
+      return { title: text('title'), link: text('link'), pubDate };
+    });
   }
 
   async function fetchNews() {
@@ -924,10 +932,10 @@
           </div>
         </div>
         <div class="weather-details">
-          <div class="weather-detail"><span class="wk">High</span>&nbsp;${Math.round(d.temperature_2m_max[0])}°</div>
-          <div class="weather-detail"><span class="wk">Low</span>&nbsp;${Math.round(d.temperature_2m_min[0])}°</div>
-          <div class="weather-detail">${rain > 0 ? `🌧️ ${rain}mm rain` : '☀️ No rain'}</div>
-          <div class="weather-detail">💨 ${Math.round(cur.wind_speed_10m)} km/h</div>
+          <div class="weather-detail"><span class="wk">High</span><span class="wv">${Math.round(d.temperature_2m_max[0])}°</span></div>
+          <div class="weather-detail"><span class="wk">Low</span><span class="wv">${Math.round(d.temperature_2m_min[0])}°</span></div>
+          <div class="weather-detail"><span class="wk">Rain</span><span class="wv">${rain > 0 ? rain + ' mm' : 'None'}</span></div>
+          <div class="weather-detail"><span class="wk">Wind</span><span class="wv">${Math.round(cur.wind_speed_10m)} km/h</span></div>
         </div>`;
     }
 
@@ -972,7 +980,7 @@
         <div class="news-item">
           <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
             <div class="news-title">${esc(item.title)}</div>
-            <div class="news-meta">${esc(item.pubDate ? item.pubDate.slice(0, 10) : '')}</div>
+            <div class="news-meta">${esc(item.pubDate)}</div>
           </a>
         </div>`).join('');
     }
@@ -988,7 +996,7 @@
         <div class="news-item">
           <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
             <div class="news-title">${esc(item.title)}</div>
-            <div class="news-meta">${esc(item.pubDate ? item.pubDate.slice(0, 10) : '')}</div>
+            <div class="news-meta">${esc(item.pubDate)}</div>
           </a>
         </div>`).join('');
     }

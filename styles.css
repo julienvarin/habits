@@ -529,13 +529,16 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 .weather-temp-big sup { font-size: 16px; font-weight: 400; color: var(--fg-dim); vertical-align: super; }
 .weather-desc     { font-size: 14px; color: var(--fg-2); margin-top: 2px; }
 .weather-location { font-size: 12px; color: var(--fg-dim); margin-top: 2px; }
-.weather-details {
-  display: flex; flex-wrap: wrap; gap: 12px;
+.weather-details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.weather-detail {
   background: var(--bg-inset); border-radius: var(--radius-sm);
-  padding: 10px 12px; font-size: 13px; color: var(--fg-2);
+  padding: 10px 12px; display: flex; flex-direction: column; gap: 3px;
 }
-.weather-detail { display: flex; align-items: center; gap: 4px; }
-.weather-detail .wk { color: var(--fg-dim); font-size: 12px; }
+.weather-detail .wk {
+  font-size: 10px; font-weight: 600; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: 0.05em;
+}
+.weather-detail .wv { font-size: 16px; font-weight: 700; color: var(--fg); letter-spacing: -0.02em; }
 
 /* Calendar */
 .cal-day-section { margin-bottom: 14px; }
