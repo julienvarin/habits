@@ -774,9 +774,10 @@
       const restoreEvs = evs => (evs || []).map(ev => ({
         ...ev, startTime: ev.startTime ? new Date(ev.startTime) : null,
       }));
+      morningState.weather   = c.weather || null;
       morningState.calendar  = { today: restoreEvs(c.calendar?.today), tomorrow: restoreEvs(c.calendar?.tomorrow) };
-      morningState.news      = c.news   || null;
-      morningState.events    = c.events || null;
+      morningState.news      = c.news    || null;
+      morningState.events    = c.events  || null;
       morningState.lastFetched = c.lastFetched || null;
     } catch { /* ignore corrupt cache */ }
   }
@@ -787,9 +788,10 @@
         ...ev, startTime: ev.startTime ? ev.startTime.toISOString() : null,
       }));
       sessionStorage.setItem(MORNING_CACHE_KEY, JSON.stringify({
+        weather:  morningState.weather,
         calendar: { today: serEvs(morningState.calendar.today), tomorrow: serEvs(morningState.calendar.tomorrow) },
-        news:        morningState.news,
-        events:      morningState.events,
+        news:     morningState.news,
+        events:   morningState.events,
         lastFetched: morningState.lastFetched,
       }));
     } catch { /* ignore quota errors */ }
@@ -810,24 +812,10 @@
   }
 
   async function fetchWeather() {
-    const { lat, lon } = await new Promise(resolve => {
-      navigator.geolocation.getCurrentPosition(
-        p  => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
-        () => resolve({ lat: 52.52, lon: 13.405 })   // fallback: Berlin
-      );
-    });
-
-    const [wResp, gResp] = await Promise.all([
-      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,precipitation,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&timezone=auto&forecast_days=1`),
-      fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`, {
-        headers: { 'Accept-Language': 'en' },
-      }),
-    ]);
-
-    const weather = await wResp.json();
-    const geo     = await gResp.json();
-    const city    = geo.address?.city || geo.address?.town || geo.address?.village || 'Your location';
-    morningState.weather = { ...weather, city };
+    // wttr.in: single request, IP-based location, no permission needed
+    const resp = await fetch('https://wttr.in/?format=j1');
+    if (!resp.ok) throw new Error(`Weather ${resp.status}`);
+    morningState.weather = await resp.json();
   }
 
   function parseIcal(text) {
@@ -1000,25 +988,27 @@
     } else if (!morningState.weather) {
       weatherBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading weather…</div>`;
     } else {
-      const w   = morningState.weather;
-      const cur = w.current;
-      const d   = w.daily;
-      const wmo = wmoInfo(cur.weather_code);
-      const rain = d.precipitation_sum[0];
+      const w    = morningState.weather;
+      const cur  = w.current_condition[0];
+      const day  = w.weather[0];
+      const area = w.nearest_area[0];
+      const city = area.areaName[0].value;
+      const wmo  = wmoInfo(parseInt(cur.weatherCode));
+      const rain = day.hourly.reduce((s, h) => s + parseFloat(h.precipMM), 0);
       weatherBody = `
         <div class="weather-main">
           <span class="weather-icon">${wmo.icon}</span>
           <div>
-            <div class="weather-temp-big">${Math.round(cur.temperature_2m)}<sup>°C</sup></div>
+            <div class="weather-temp-big">${cur.temp_C}<sup>°C</sup></div>
             <div class="weather-desc">${wmo.desc}</div>
-            <div class="weather-location">📍 ${esc(w.city)}</div>
+            <div class="weather-location">📍 ${esc(city)}</div>
           </div>
         </div>
         <div class="weather-details">
-          <div class="weather-detail"><span class="wk">High</span><span class="wv">${Math.round(d.temperature_2m_max[0])}°</span></div>
-          <div class="weather-detail"><span class="wk">Low</span><span class="wv">${Math.round(d.temperature_2m_min[0])}°</span></div>
-          <div class="weather-detail"><span class="wk">Rain</span><span class="wv">${rain > 0 ? rain + ' mm' : 'None'}</span></div>
-          <div class="weather-detail"><span class="wk">Wind</span><span class="wv">${Math.round(cur.wind_speed_10m)} km/h</span></div>
+          <div class="weather-detail"><span class="wk">High</span><span class="wv">${day.maxtempC}°</span></div>
+          <div class="weather-detail"><span class="wk">Low</span><span class="wv">${day.mintempC}°</span></div>
+          <div class="weather-detail"><span class="wk">Rain</span><span class="wv">${rain > 0 ? rain.toFixed(1) + ' mm' : 'None'}</span></div>
+          <div class="weather-detail"><span class="wk">Wind</span><span class="wv">${cur.windspeedKmph} km/h</span></div>
         </div>`;
     }
 
