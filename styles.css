@@ -494,23 +494,26 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 }
 .year-title { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg); }
 .year-meta  { font-size: 13px; color: var(--fg-dim); }
-/* Year grid (GitHub-style) */
-.year-grid-scroll { overflow-x: auto; padding-bottom: 2px; margin-top: 10px; }
-.year-grid-inner  { display: inline-flex; flex-direction: column; gap: 3px; min-width: max-content; }
-.year-grid-header { display: flex; align-items: flex-end; gap: 2px; padding-left: 18px; margin-bottom: 1px; }
-.year-grid-mlabel { font-size: 9px; color: var(--fg-dim); min-width: 13px; flex-shrink: 0; line-height: 1; }
-.year-grid-body   { display: flex; gap: 4px; }
-.year-grid-dow    { display: flex; flex-direction: column; gap: 2px; width: 14px; flex-shrink: 0; }
-.year-grid-dow span { font-size: 9px; color: var(--fg-dim); height: 11px; line-height: 11px; text-align: right; }
-.year-grid-weeks  { display: flex; gap: 2px; }
-.year-grid-week   { display: flex; flex-direction: column; gap: 2px; }
-.year-cell {
-  width: 11px; height: 11px; border-radius: 2px; flex-shrink: 0;
+/* Year week grid: 1 block = 1 week, 4 per row */
+.year-week-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 4px;
+  margin-top: 12px;
+}
+.year-week-cell {
+  height: 18px; border-radius: 4px;
   background: var(--bg-inset); border: 1px solid var(--border);
 }
-.year-cell.past  { background: var(--accent); border-color: transparent; }
-.year-cell.today { background: var(--accent); border-color: transparent; box-shadow: 0 0 0 1.5px var(--fg); }
-.year-cell.out   { opacity: 0; pointer-events: none; }
+.year-week-cell.past {
+  background: color-mix(in srgb, var(--accent) 22%, white);
+  border-color: color-mix(in srgb, var(--accent) 35%, transparent);
+}
+.year-week-cell.current {
+  background: var(--accent); border-color: transparent;
+  box-shadow: 0 0 0 2px var(--fg);
+}
+.year-week-cell.empty { opacity: 0; pointer-events: none; }
 
 /* Morning cards */
 .morning-card {

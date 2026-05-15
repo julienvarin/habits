@@ -912,52 +912,22 @@
   function buildYearGrid() {
     const now      = new Date();
     const year     = now.getFullYear();
-    const todayStr = fmtDate(now);
     const yearStart = new Date(year, 0, 1);
-    const startDow  = (yearStart.getDay() + 6) % 7; // Mon=0
-    const gridStart = shiftDays(yearStart, -startDow);
+    const isLeap   = new Date(year, 2, 0).getDate() === 29;
+    const totalWeeks = isLeap ? 53 : 52;
+    const dayOfYear  = Math.floor((now - yearStart) / 86400000); // 0-indexed
+    const currentWeek = Math.floor(dayOfYear / 7);               // 0-indexed
 
-    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-    const DOW    = ['M', '', 'W', '', 'F', '', ''];
+    // Pad to next multiple of 4
+    const totalCells = Math.ceil(totalWeeks / 4) * 4;
 
-    const weeks = [];
-    const monthAtWeek = {};
+    const cells = Array.from({ length: totalCells }, (_, w) => {
+      if (w >= totalWeeks) return `<div class="year-week-cell empty"></div>`;
+      const cls = w < currentWeek ? 'past' : w === currentWeek ? 'current' : '';
+      return `<div class="year-week-cell${cls ? ' ' + cls : ''}"></div>`;
+    }).join('');
 
-    for (let w = 0; w < 53; w++) {
-      const cells = [];
-      for (let d = 0; d < 7; d++) {
-        const date   = shiftDays(gridStart, w * 7 + d);
-        const ds     = fmtDate(date);
-        const inYear = date.getFullYear() === year;
-        if (inYear && date.getDate() === 1) monthAtWeek[w] = MONTHS[date.getMonth()];
-        cells.push({ ds, inYear, isToday: ds === todayStr, isPast: inYear && ds < todayStr });
-      }
-      weeks.push(cells);
-    }
-
-    const monthLabels = weeks.map((_, w) =>
-      `<span class="year-grid-mlabel">${monthAtWeek[w] || ''}</span>`
-    ).join('');
-
-    const weekCols = weeks.map(cells =>
-      `<div class="year-grid-week">${cells.map(c => {
-        const cls = !c.inYear ? 'out' : c.isToday ? 'today' : c.isPast ? 'past' : '';
-        return `<div class="year-cell${cls ? ' ' + cls : ''}" title="${c.ds}"></div>`;
-      }).join('')}</div>`
-    ).join('');
-
-    const dowLabels = DOW.map(l => `<span>${l}</span>`).join('');
-
-    return `
-      <div class="year-grid-scroll">
-        <div class="year-grid-inner">
-          <div class="year-grid-header">${monthLabels}</div>
-          <div class="year-grid-body">
-            <div class="year-grid-dow">${dowLabels}</div>
-            <div class="year-grid-weeks">${weekCols}</div>
-          </div>
-        </div>
-      </div>`;
+    return `<div class="year-week-grid">${cells}</div>`;
   }
 
   function renderMorning() {
