@@ -915,7 +915,7 @@
 
   async function fetchBerlinEvents() {
     try {
-      morningState.events = await fetchRSSFeed('https://www.berlin.de/en/events/rss.xml', 5);
+      morningState.events = await fetchRSSFeed('https://exberliner.com/feed/', 5);
     } catch (err) {
       morningState.eventsErr = err.message;
     }
