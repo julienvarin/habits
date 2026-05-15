@@ -921,6 +921,57 @@
     }
   }
 
+  function buildYearGrid() {
+    const now      = new Date();
+    const year     = now.getFullYear();
+    const todayStr = fmtDate(now);
+    const yearStart = new Date(year, 0, 1);
+    const startDow  = (yearStart.getDay() + 6) % 7; // Mon=0
+    const gridStart = shiftDays(yearStart, -startDow);
+
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const DOW    = ['M', '', 'W', '', 'F', '', ''];
+
+    const weeks = [];
+    const monthAtWeek = {};
+
+    for (let w = 0; w < 53; w++) {
+      const cells = [];
+      for (let d = 0; d < 7; d++) {
+        const date   = shiftDays(gridStart, w * 7 + d);
+        const ds     = fmtDate(date);
+        const inYear = date.getFullYear() === year;
+        if (inYear && date.getDate() === 1) monthAtWeek[w] = MONTHS[date.getMonth()];
+        cells.push({ ds, inYear, isToday: ds === todayStr, isPast: inYear && ds < todayStr });
+      }
+      weeks.push(cells);
+    }
+
+    const monthLabels = weeks.map((_, w) =>
+      `<span class="year-grid-mlabel">${monthAtWeek[w] || ''}</span>`
+    ).join('');
+
+    const weekCols = weeks.map(cells =>
+      `<div class="year-grid-week">${cells.map(c => {
+        const cls = !c.inYear ? 'out' : c.isToday ? 'today' : c.isPast ? 'past' : '';
+        return `<div class="year-cell${cls ? ' ' + cls : ''}" title="${c.ds}"></div>`;
+      }).join('')}</div>`
+    ).join('');
+
+    const dowLabels = DOW.map(l => `<span>${l}</span>`).join('');
+
+    return `
+      <div class="year-grid-scroll">
+        <div class="year-grid-inner">
+          <div class="year-grid-header">${monthLabels}</div>
+          <div class="year-grid-body">
+            <div class="year-grid-dow">${dowLabels}</div>
+            <div class="year-grid-weeks">${weekCols}</div>
+          </div>
+        </div>
+      </div>`;
+  }
+
   function renderMorning() {
     const root = document.getElementById('view-morning');
 
@@ -932,7 +983,6 @@
     const dayOfYear  = Math.floor((now - yearStart) / 86400000) + 1;
     const isLeap     = new Date(now.getFullYear(), 2, 0).getDate() === 29;
     const daysInYear = isLeap ? 366 : 365;
-    const months     = ['J','F','M','A','M','J','J','A','S','O','N','D'];
 
     const yearCard = `
       <div class="year-progress-card">
@@ -940,8 +990,7 @@
           <span class="year-title">Day ${dayOfYear} of ${daysInYear}</span>
           <span class="year-meta">${pct}% of ${now.getFullYear()}</span>
         </div>
-        <div class="year-bar"><div class="year-fill" style="width:${pct}%"></div></div>
-        <div class="year-month-ticks">${months.map(m => `<span class="year-month-tick">${m}</span>`).join('')}</div>
+        ${buildYearGrid()}
       </div>`;
 
     // ---- Weather ----

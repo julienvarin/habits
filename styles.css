@@ -494,17 +494,23 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 }
 .year-title { font-size: 16px; font-weight: 700; letter-spacing: -0.02em; color: var(--fg); }
 .year-meta  { font-size: 13px; color: var(--fg-dim); }
-.year-bar   { height: 8px; border-radius: 99px; background: var(--border); overflow: hidden; }
-.year-fill  {
-  height: 100%; border-radius: 99px;
-  background: linear-gradient(90deg, var(--accent), #007aff);
-  transition: width 0.6s cubic-bezier(.22,1,.36,1);
+/* Year grid (GitHub-style) */
+.year-grid-scroll { overflow-x: auto; padding-bottom: 2px; margin-top: 10px; }
+.year-grid-inner  { display: inline-flex; flex-direction: column; gap: 3px; min-width: max-content; }
+.year-grid-header { display: flex; align-items: flex-end; gap: 2px; padding-left: 18px; margin-bottom: 1px; }
+.year-grid-mlabel { font-size: 9px; color: var(--fg-dim); min-width: 13px; flex-shrink: 0; line-height: 1; }
+.year-grid-body   { display: flex; gap: 4px; }
+.year-grid-dow    { display: flex; flex-direction: column; gap: 2px; width: 14px; flex-shrink: 0; }
+.year-grid-dow span { font-size: 9px; color: var(--fg-dim); height: 11px; line-height: 11px; text-align: right; }
+.year-grid-weeks  { display: flex; gap: 2px; }
+.year-grid-week   { display: flex; flex-direction: column; gap: 2px; }
+.year-cell {
+  width: 11px; height: 11px; border-radius: 2px; flex-shrink: 0;
+  background: var(--bg-inset); border: 1px solid var(--border);
 }
-.year-month-ticks {
-  display: flex; justify-content: space-between;
-  margin-top: 6px; padding: 0 1px;
-}
-.year-month-tick { font-size: 9px; color: var(--border-hi); text-align: center; flex: 1; }
+.year-cell.past  { background: var(--accent); border-color: transparent; }
+.year-cell.today { background: var(--accent); border-color: transparent; box-shadow: 0 0 0 1.5px var(--fg); }
+.year-cell.out   { opacity: 0; pointer-events: none; }
 
 /* Morning cards */
 .morning-card {
