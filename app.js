@@ -763,6 +763,40 @@
     lastFetched: null,
   };
 
+  // Persist calendar/news/events across page reloads (within the tab session)
+  const MORNING_CACHE_KEY = 'habits.morning.v1';
+
+  function loadMorningCache() {
+    try {
+      const raw = sessionStorage.getItem(MORNING_CACHE_KEY);
+      if (!raw) return;
+      const c = JSON.parse(raw);
+      const restoreEvs = evs => (evs || []).map(ev => ({
+        ...ev, startTime: ev.startTime ? new Date(ev.startTime) : null,
+      }));
+      morningState.calendar  = { today: restoreEvs(c.calendar?.today), tomorrow: restoreEvs(c.calendar?.tomorrow) };
+      morningState.news      = c.news   || null;
+      morningState.events    = c.events || null;
+      morningState.lastFetched = c.lastFetched || null;
+    } catch { /* ignore corrupt cache */ }
+  }
+
+  function saveMorningCache() {
+    try {
+      const serEvs = evs => evs.map(ev => ({
+        ...ev, startTime: ev.startTime ? ev.startTime.toISOString() : null,
+      }));
+      sessionStorage.setItem(MORNING_CACHE_KEY, JSON.stringify({
+        calendar: { today: serEvs(morningState.calendar.today), tomorrow: serEvs(morningState.calendar.tomorrow) },
+        news:        morningState.news,
+        events:      morningState.events,
+        lastFetched: morningState.lastFetched,
+      }));
+    } catch { /* ignore quota errors */ }
+  }
+
+  loadMorningCache();
+
   function wmoInfo(code) {
     if (code === 0)  return { icon: '☀️', desc: 'Clear sky' };
     if (code <= 2)   return { icon: '🌤️', desc: 'Partly cloudy' };
@@ -855,7 +889,7 @@
   }
 
   async function fetchRSSFeed(rssUrl, count) {
-    const proxy = `https://api.allorigins.win/raw?url=${encodeURIComponent(rssUrl)}`;
+    const proxy = `https://corsproxy.io/?url=${encodeURIComponent(rssUrl)}`;
     const resp  = await fetch(proxy);
     if (!resp.ok) throw new Error(`RSS ${resp.status}`);
     const xml = await resp.text();
@@ -1042,6 +1076,7 @@
         fetchBerlinEvents(),
       ]);
       morningState.lastFetched = Date.now();
+      saveMorningCache();
     }
 
     renderMorning();
