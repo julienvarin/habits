@@ -28,6 +28,7 @@ jobs:
           cat > config.js << 'SCRIPT'
           window.SUPABASE_URL = "${{ secrets.SUPABASE_URL }}";
           window.SUPABASE_ANON_KEY = "${{ secrets.SUPABASE_ANON_KEY }}";
+          window.JULIEN_CALENDAR_ICAL_URL = "${{ secrets.JULIEN_CALENDAR_ICAL_URL }}";
           SCRIPT
 
       - uses: actions/configure-pages@v5

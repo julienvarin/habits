@@ -753,6 +753,293 @@
   }
 
   // ============================================================
+  // Morning view
+  // ============================================================
+  const morningState = {
+    weather: null, weatherErr: null,
+    calendar: { today: [], tomorrow: [] }, calErr: null,
+    news: null, newsErr: null,
+    events: null, eventsErr: null,
+    lastFetched: null,
+  };
+
+  function wmoInfo(code) {
+    if (code === 0)  return { icon: '☀️', desc: 'Clear sky' };
+    if (code <= 2)   return { icon: '🌤️', desc: 'Partly cloudy' };
+    if (code === 3)  return { icon: '☁️',  desc: 'Overcast' };
+    if (code <= 49)  return { icon: '🌫️', desc: 'Foggy' };
+    if (code <= 59)  return { icon: '🌦️', desc: 'Drizzle' };
+    if (code <= 69)  return { icon: '🌧️', desc: 'Rain' };
+    if (code <= 79)  return { icon: '❄️',  desc: 'Snow' };
+    if (code <= 84)  return { icon: '🌦️', desc: 'Rain showers' };
+    return { icon: '⛈️', desc: 'Thunderstorm' };
+  }
+
+  async function fetchWeather() {
+    const { lat, lon } = await new Promise(resolve => {
+      navigator.geolocation.getCurrentPosition(
+        p  => resolve({ lat: p.coords.latitude, lon: p.coords.longitude }),
+        () => resolve({ lat: 52.52, lon: 13.405 })   // fallback: Berlin
+      );
+    });
+
+    const [wResp, gResp] = await Promise.all([
+      fetch(`https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,weather_code,precipitation,wind_speed_10m&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code&timezone=auto&forecast_days=1`),
+      fetch(`https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json`, {
+        headers: { 'Accept-Language': 'en' },
+      }),
+    ]);
+
+    const weather = await wResp.json();
+    const geo     = await gResp.json();
+    const city    = geo.address?.city || geo.address?.town || geo.address?.village || 'Your location';
+    morningState.weather = { ...weather, city };
+  }
+
+  function parseIcal(text) {
+    // Unfold continuation lines (RFC 5545 §3.1)
+    const unfolded = text.replace(/\r\n[ \t]/g, '').replace(/\n[ \t]/g, '');
+    const now        = new Date();
+    const today      = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const todayStr   = fmtDate(today);
+    const tomorrowStr = fmtDate(new Date(today.getTime() + 86400000));
+    const todayEvs = [], tomorrowEvs = [];
+
+    const blocks = unfolded.split('BEGIN:VEVENT');
+    for (let i = 1; i < blocks.length; i++) {
+      const block = blocks[i];
+      // Extract property value (handles PROP;PARAM=x:VALUE and PROP:VALUE)
+      const get = name => {
+        const m = block.match(new RegExp(`^${name}(?:;[^:]*)?:([^\\r\\n]*)`, 'm'));
+        return m ? m[1].trim() : null;
+      };
+
+      const summary = get('SUMMARY') || '(No title)';
+      const dtstart = get('DTSTART');
+      if (!dtstart) continue;
+
+      // Parse date string: 20260515 or 20260515T120000[Z]
+      const digits  = dtstart.replace(/[^0-9]/g, '');
+      const dateStr = `${digits.slice(0,4)}-${digits.slice(4,6)}-${digits.slice(6,8)}`;
+      const allDay  = dtstart.length === 8 || /VALUE=DATE/.test(block.split('DTSTART')[1]?.split('\n')[0] || '');
+
+      let startTime = null;
+      if (!allDay && digits.length >= 14) {
+        const iso = `${digits.slice(0,4)}-${digits.slice(4,6)}-${digits.slice(6,8)}T${digits.slice(8,10)}:${digits.slice(10,12)}:${digits.slice(12,14)}${dtstart.endsWith('Z') ? 'Z' : ''}`;
+        startTime = new Date(iso);
+      }
+
+      const ev = { summary, dateStr, allDay, startTime };
+      if (dateStr === todayStr)    todayEvs.push(ev);
+      else if (dateStr === tomorrowStr) tomorrowEvs.push(ev);
+    }
+
+    // Sort by start time (all-day events first)
+    const sort = evs => evs.sort((a, b) => {
+      if (a.allDay && !b.allDay) return -1;
+      if (!a.allDay && b.allDay) return 1;
+      return (a.startTime || 0) - (b.startTime || 0);
+    });
+
+    morningState.calendar = { today: sort(todayEvs), tomorrow: sort(tomorrowEvs) };
+  }
+
+  async function fetchCalendarEvents() {
+    const url = window.JULIEN_CALENDAR_ICAL_URL;
+    if (!url || url.startsWith('REPLACE_ME')) return;
+    const proxy = `https://corsproxy.io/?url=${encodeURIComponent(url)}`;
+    const resp  = await fetch(proxy);
+    if (!resp.ok) throw new Error(`iCal fetch failed (${resp.status})`);
+    const text = await resp.text();
+    parseIcal(text);
+  }
+
+  async function fetchRSSFeed(rssUrl, count) {
+    const url  = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}&count=${count || 5}`;
+    const resp = await fetch(url);
+    if (!resp.ok) throw new Error(`RSS ${resp.status}`);
+    const data = await resp.json();
+    if (data.status !== 'ok') throw new Error('RSS parse failed');
+    return data.items;
+  }
+
+  async function fetchNews() {
+    try {
+      morningState.news = await fetchRSSFeed('https://feeds.bbci.co.uk/news/world/rss.xml', 5);
+    } catch (err) {
+      morningState.newsErr = err.message;
+    }
+  }
+
+  async function fetchBerlinEvents() {
+    try {
+      morningState.events = await fetchRSSFeed('https://www.berlin.de/en/events/rss.xml', 5);
+    } catch (err) {
+      morningState.eventsErr = err.message;
+    }
+  }
+
+  function renderMorning() {
+    const root = document.getElementById('view-morning');
+
+    // ---- Year progress ----
+    const now        = new Date();
+    const yearStart  = new Date(now.getFullYear(), 0, 1);
+    const yearEnd    = new Date(now.getFullYear() + 1, 0, 1);
+    const pct        = ((now - yearStart) / (yearEnd - yearStart) * 100).toFixed(1);
+    const dayOfYear  = Math.floor((now - yearStart) / 86400000) + 1;
+    const isLeap     = new Date(now.getFullYear(), 2, 0).getDate() === 29;
+    const daysInYear = isLeap ? 366 : 365;
+    const months     = ['J','F','M','A','M','J','J','A','S','O','N','D'];
+
+    const yearCard = `
+      <div class="year-progress-card">
+        <div class="year-progress-label">
+          <span class="year-title">Day ${dayOfYear} of ${daysInYear}</span>
+          <span class="year-meta">${pct}% of ${now.getFullYear()}</span>
+        </div>
+        <div class="year-bar"><div class="year-fill" style="width:${pct}%"></div></div>
+        <div class="year-month-ticks">${months.map(m => `<span class="year-month-tick">${m}</span>`).join('')}</div>
+      </div>`;
+
+    // ---- Weather ----
+    let weatherBody;
+    if (morningState.weatherErr) {
+      weatherBody = `<p class="morning-error">⚠️ ${esc(morningState.weatherErr)}</p>`;
+    } else if (!morningState.weather) {
+      weatherBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading weather…</div>`;
+    } else {
+      const w   = morningState.weather;
+      const cur = w.current;
+      const d   = w.daily;
+      const wmo = wmoInfo(cur.weather_code);
+      const rain = d.precipitation_sum[0];
+      weatherBody = `
+        <div class="weather-main">
+          <span class="weather-icon">${wmo.icon}</span>
+          <div>
+            <div class="weather-temp-big">${Math.round(cur.temperature_2m)}<sup>°C</sup></div>
+            <div class="weather-desc">${wmo.desc}</div>
+            <div class="weather-location">📍 ${esc(w.city)}</div>
+          </div>
+        </div>
+        <div class="weather-details">
+          <div class="weather-detail"><span class="wk">High</span>&nbsp;${Math.round(d.temperature_2m_max[0])}°</div>
+          <div class="weather-detail"><span class="wk">Low</span>&nbsp;${Math.round(d.temperature_2m_min[0])}°</div>
+          <div class="weather-detail">${rain > 0 ? `🌧️ ${rain}mm rain` : '☀️ No rain'}</div>
+          <div class="weather-detail">💨 ${Math.round(cur.wind_speed_10m)} km/h</div>
+        </div>`;
+    }
+
+    // ---- Calendar ----
+    let calBody;
+    if (!window.JULIEN_CALENDAR_ICAL_URL || window.JULIEN_CALENDAR_ICAL_URL.startsWith('REPLACE_ME')) {
+      calBody = `<p class="cal-setup-note">Add <code>JULIEN_CALENDAR_ICAL_URL</code> to <code>config.js</code> to connect your calendar.</p>`;
+    } else if (morningState.calErr) {
+      calBody = `<p class="morning-error">⚠️ ${esc(morningState.calErr)}</p>`;
+    } else if (!morningState.calendar.today.length && !morningState.calendar.tomorrow.length && !morningState.calErr) {
+      calBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading calendar…</div>`;
+    } else {
+      function renderDayEvents(evs, label) {
+        const items = evs.map(ev => {
+          const time = ev.allDay
+            ? 'All day'
+            : ev.startTime
+              ? ev.startTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+              : '';
+          return `<div class="cal-event">
+            <span class="cal-event-time">${time}</span>
+            <span class="cal-event-title">${esc(ev.summary)}</span>
+          </div>`;
+        }).join('');
+        return `<div class="cal-day-section">
+          <div class="cal-day-label">${label}</div>
+          ${items || '<p class="cal-no-meetings">No meetings</p>'}
+        </div>`;
+      }
+      calBody = renderDayEvents(morningState.calendar.today, 'Today') +
+                renderDayEvents(morningState.calendar.tomorrow, 'Tomorrow');
+    }
+
+    // ---- News ----
+    let newsBody;
+    if (morningState.newsErr) {
+      newsBody = `<p class="morning-error">⚠️ ${esc(morningState.newsErr)}</p>`;
+    } else if (!morningState.news) {
+      newsBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading news…</div>`;
+    } else {
+      newsBody = morningState.news.map(item => `
+        <div class="news-item">
+          <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
+            <div class="news-title">${esc(item.title)}</div>
+            <div class="news-meta">${esc(item.pubDate ? item.pubDate.slice(0, 10) : '')}</div>
+          </a>
+        </div>`).join('');
+    }
+
+    // ---- Berlin events ----
+    let eventsBody;
+    if (morningState.eventsErr) {
+      eventsBody = `<p class="morning-error">⚠️ ${esc(morningState.eventsErr)}</p>`;
+    } else if (!morningState.events) {
+      eventsBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading events…</div>`;
+    } else {
+      eventsBody = morningState.events.map(item => `
+        <div class="news-item">
+          <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
+            <div class="news-title">${esc(item.title)}</div>
+            <div class="news-meta">${esc(item.pubDate ? item.pubDate.slice(0, 10) : '')}</div>
+          </a>
+        </div>`).join('');
+    }
+
+    root.innerHTML = `
+      <div class="morning-grid">
+        ${yearCard}
+        <div class="morning-card">
+          <div class="morning-card-title">Weather</div>
+          ${weatherBody}
+        </div>
+        <div class="morning-card">
+          <div class="morning-card-title">Calendar</div>
+          ${calBody}
+        </div>
+        <div class="morning-card">
+          <div class="morning-card-title">World News</div>
+          ${newsBody}
+        </div>
+        <div class="morning-card">
+          <div class="morning-card-title">Berlin Events</div>
+          ${eventsBody}
+        </div>
+      </div>`;
+  }
+
+  async function initMorningView() {
+    const STALE_MS = 30 * 60 * 1000;
+    const stale    = !morningState.lastFetched || (Date.now() - morningState.lastFetched > STALE_MS);
+
+    if (stale) {
+      morningState.weather = null; morningState.weatherErr = null;
+      morningState.news    = null; morningState.newsErr    = null;
+      morningState.events  = null; morningState.eventsErr  = null;
+      morningState.calErr  = null;
+      morningState.calendar = { today: [], tomorrow: [] };
+      renderMorning();
+
+      await Promise.all([
+        fetchWeather().catch(err => { morningState.weatherErr = err.message; }),
+        fetchCalendarEvents().catch(err => { morningState.calErr = err.message; }),
+        fetchNews(),
+        fetchBerlinEvents(),
+      ]);
+      morningState.lastFetched = Date.now();
+    }
+
+    renderMorning();
+  }
+
+  // ============================================================
   // Event delegation
   // ============================================================
   document.addEventListener('click', e => {
@@ -790,12 +1077,13 @@
       document.querySelectorAll('.view').forEach(s => s.classList.remove('active'));
       document.getElementById(`view-${v}`).classList.add('active');
 
-      const titles = { today:'Today', history:'History', stats:'Stats' };
+      const titles = { morning:'Morning', today:'Today', history:'History', stats:'Stats' };
       document.getElementById('page-title').textContent = titles[v];
 
       // Show/hide FAB
       document.getElementById('fab').style.display = v === 'today' ? '' : 'none';
 
+      if (v === 'morning') initMorningView();
       renderProgress();
     });
   });
@@ -814,7 +1102,10 @@
   }, { passive: true });
 
   // Re-fetch on tab focus (picks up changes made on another device)
-  window.addEventListener('focus', () => { if (!state.loading) load(); });
+  window.addEventListener('focus', () => {
+    if (!state.loading) load();
+    if (state.view === 'morning') initMorningView();
+  });
 
   // ============================================================
   // Date label

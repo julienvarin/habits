@@ -27,6 +27,7 @@
       <div id="progress-area"></div>
     </header>
 
+    <section id="view-morning" class="view"></section>
     <section id="view-today"   class="view active"></section>
     <section id="view-history" class="view"></section>
     <section id="view-stats"   class="view"></section>
@@ -34,6 +35,9 @@
     <button id="fab" aria-label="Add habit">+</button>
 
     <nav class="tabs" role="tablist" aria-label="Views">
+      <button class="tab" data-view="morning" role="tab" aria-selected="false">
+        <span class="tab-icon">☀</span>Morning
+      </button>
       <button class="tab active" data-view="today"   role="tab" aria-selected="true">
         <span class="tab-icon">✓</span>Today
       </button>
