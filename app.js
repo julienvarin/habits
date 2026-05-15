@@ -918,8 +918,8 @@
     const dayOfYear  = Math.floor((now - yearStart) / 86400000); // 0-indexed
     const currentWeek = Math.floor(dayOfYear / 7);               // 0-indexed
 
-    // Pad to next multiple of 4
-    const totalCells = Math.ceil(totalWeeks / 4) * 4;
+    // Pad to next multiple of 13 (grid columns)
+    const totalCells = Math.ceil(totalWeeks / 13) * 13;
 
     const cells = Array.from({ length: totalCells }, (_, w) => {
       if (w >= totalWeeks) return `<div class="year-week-cell empty"></div>`;

@@ -497,12 +497,12 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 /* Year week grid: 1 block = 1 week, 4 per row */
 .year-week-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(13, 1fr);
   gap: 4px;
   margin-top: 12px;
 }
 .year-week-cell {
-  height: 18px; border-radius: 4px;
+  aspect-ratio: 1; border-radius: 4px;
   background: var(--bg-inset); border: 1px solid var(--border);
 }
 .year-week-cell.past {
