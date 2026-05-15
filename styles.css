@@ -330,6 +330,30 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 .history-head h3 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; color: var(--fg); }
 .history-meta { font-size: 12px; color: var(--fg-dim); white-space: nowrap; }
 
+/* Year label in history */
+.history-year-label {
+  font-size: 13px; font-weight: 700; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: 0.06em;
+  padding: 0 2px 10px;
+}
+
+/* Year heatmap in history */
+.hist-year-scroll { overflow-x: auto; padding-bottom: 2px; }
+.hist-year-inner  { display: inline-flex; flex-direction: column; gap: 3px; min-width: max-content; }
+.hist-year-header { display: flex; gap: 2px; margin-bottom: 1px; }
+.hist-year-mlabel { font-size: 9px; color: var(--fg-dim); min-width: 13px; flex-shrink: 0; line-height: 1; }
+.hist-year-weeks  { display: flex; gap: 2px; }
+.hist-year-week   { display: flex; flex-direction: column; gap: 2px; }
+.hist-year-cell {
+  width: 11px; height: 11px; border-radius: 2px; flex-shrink: 0;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  cursor: pointer; transition: opacity 0.1s;
+}
+.hist-year-cell:hover { opacity: 0.7; }
+.hist-year-cell.on     { background: var(--c, #34c759); border-color: transparent; }
+.hist-year-cell.future { opacity: 0.3; pointer-events: none; }
+.hist-year-cell.today  { box-shadow: 0 0 0 1.5px var(--fg); }
+
 /* Month grid in history */
 .hist-month-grid { display: flex; flex-direction: column; gap: 2px; }
 .hist-month-grid .cal-row { display: grid; grid-template-columns: repeat(7, 1fr); gap: 3px; }

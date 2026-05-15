@@ -412,73 +412,64 @@
       return;
     }
 
-    const offset  = state.historyOffset; // 0 = this month, 1 = last month, …
-    const todayS  = todayStr();
+    const year      = new Date().getFullYear();
+    const todayS    = todayStr();
+    const yearStart = new Date(year, 0, 1);
+    const startDow  = (yearStart.getDay() + 6) % 7; // Mon=0
+    const gridStart = shiftDays(yearStart, -startDow);
+    const MONTHS    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
 
-    // Target month
-    const ref = new Date();
-    ref.setDate(1);
-    ref.setMonth(ref.getMonth() - offset);
-    const year  = ref.getFullYear();
-    const month = ref.getMonth();
-    const monthLabel = ref.toLocaleDateString(undefined, { month: 'long', year: 'numeric' });
-    const isLatest = offset === 0;
-
-    // First day of month and total days
-    const firstDay   = new Date(year, month, 1);
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const startDow   = (firstDay.getDay() + 6) % 7; // Mon=0
-
-    const COL_LABELS = ['M','T','W','T','F','S','S'];
-
-    function buildMonthGrid(habitId) {
-      const header = `<div class="cal-row cal-header-row">${COL_LABELS.map(l =>
-        `<span class="cal-col-label">${l}</span>`).join('')}</div>`;
-
-      // Build week rows
-      const rows = [];
-      let day = 1;
-      const totalSlots = startDow + daysInMonth;
-      const totalWeeks = Math.ceil(totalSlots / 7);
-
-      for (let w = 0; w < totalWeeks; w++) {
+    function buildYearHeatmap(habitId, color) {
+      const monthAtWeek = {};
+      const weeks = [];
+      for (let w = 0; w < 53; w++) {
         const cells = [];
         for (let d = 0; d < 7; d++) {
-          const slot = w * 7 + d;
-          if (slot < startDow || day > daysInMonth) {
-            cells.push('<div class="cal-cell empty-cell"></div>');
-          } else {
-            const ds = `${year}-${pad(month + 1)}-${pad(day)}`;
-            const on = hasTick(habitId, ds);
-            const isFut = ds > todayS;
-            cells.push(
-              `<div class="cal-cell ${on?'on':''} ${isFut?'future':''} ${ds===todayS?'today':''}"
-                    data-action="toggle-day" data-id="${habitId}" data-date="${ds}"
-                    title="${day}"><span class="cal-day-num">${day}</span></div>`);
-            day++;
-          }
+          const date   = shiftDays(gridStart, w * 7 + d);
+          const ds     = fmtDate(date);
+          const inYear = date.getFullYear() === year;
+          if (inYear && date.getDate() === 1) monthAtWeek[w] = MONTHS[date.getMonth()];
+          cells.push({ ds, inYear, on: inYear && hasTick(habitId, ds), isFut: ds > todayS, isToday: ds === todayS });
         }
-        rows.push(`<div class="cal-row">${cells.join('')}</div>`);
+        weeks.push(cells);
       }
 
-      return `<div class="hist-month-grid">${header}${rows.join('')}</div>`;
+      const header = weeks.map((_, w) =>
+        `<span class="hist-year-mlabel">${monthAtWeek[w] || ''}</span>`
+      ).join('');
+
+      const cols = weeks.map(cells =>
+        `<div class="hist-year-week">${cells.map(c => {
+          if (!c.inYear) return `<div class="hist-year-cell" style="opacity:0"></div>`;
+          const cls = [c.on ? 'on' : '', c.isFut ? 'future' : '', c.isToday ? 'today' : ''].filter(Boolean).join(' ');
+          return `<div class="hist-year-cell${cls ? ' ' + cls : ''}" style="--c:${color}"
+            data-action="toggle-day" data-id="${habitId}" data-date="${c.ds}" title="${c.ds}"></div>`;
+        }).join('')}</div>`
+      ).join('');
+
+      return `
+        <div class="hist-year-scroll">
+          <div class="hist-year-inner">
+            <div class="hist-year-header">${header}</div>
+            <div class="hist-year-weeks">${cols}</div>
+          </div>
+        </div>`;
     }
 
     function buildHistoryCard(h) {
       const streak = currentStreak(h.id);
-      // Count ticks this month
-      let monthTicks = 0;
-      for (let d = 1; d <= daysInMonth; d++) {
-        if (hasTick(h.id, `${year}-${pad(month+1)}-${pad(d)}`)) monthTicks++;
+      let yearTicks = 0;
+      for (const k of state.entries) {
+        if (k.startsWith(h.id + '|') && k.slice(h.id.length + 1).startsWith(String(year))) yearTicks++;
       }
       return `
         <div class="history-card" style="color:${h.color}">
           <div class="history-head">
             <div class="history-swatch"></div>
             <h3>${esc(h.name)}</h3>
-            <span class="history-meta">${monthTicks}d${streak > 0 ? ` · 🔥${streak}` : ''}</span>
+            <span class="history-meta">${yearTicks}d${streak > 0 ? ` · 🔥${streak}` : ''}</span>
           </div>
-          ${buildMonthGrid(h.id)}
+          ${buildYearHeatmap(h.id, h.color)}
         </div>`;
     }
 
@@ -497,13 +488,7 @@
       }
     }
 
-    root.innerHTML = `
-      <div class="history-nav">
-        <button class="history-nav-btn" data-action="history-back" aria-label="Previous month">‹</button>
-        <span class="history-nav-label">${monthLabel}</span>
-        <button class="history-nav-btn ${isLatest ? 'disabled' : ''}" data-action="history-fwd" aria-label="Next month" ${isLatest ? 'disabled' : ''}>›</button>
-      </div>
-      ${cardsHtml}`;
+    root.innerHTML = `<div class="history-year-label">${year}</div>${cardsHtml}`;
   }
 
   // ============================================================
