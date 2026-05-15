@@ -14,7 +14,11 @@
   <title>Habits</title>
 </head>
 <body>
-  <div id="app">
+  <div id="gate" class="gate">
+    <input id="gate-input" type="password" placeholder="Password" autocomplete="off" />
+  </div>
+
+  <div id="app" style="display:none">
     <header class="topbar" id="topbar">
       <div class="topbar-row1">
         <h1 id="page-title">Today</h1>
@@ -45,8 +49,34 @@
     <div id="toast"      role="status" aria-live="polite"></div>
   </div>
 
-  <script src="config.js"></script>
-  <script src="supabase.js"></script>
-  <script src="app.js"></script>
+  <script>
+    (function() {
+      var KEY = 'habits.unlocked';
+      if (localStorage.getItem(KEY)) { unlock(); return; }
+      var gate = document.getElementById('gate');
+      var input = document.getElementById('gate-input');
+      gate.style.display = '';
+      input.addEventListener('keydown', function(e) {
+        if (e.key === 'Enter' && input.value === 'go') {
+          localStorage.setItem(KEY, '1');
+          unlock();
+        }
+      });
+      function unlock() {
+        document.getElementById('gate').style.display = 'none';
+        document.getElementById('app').style.display = '';
+        var s1 = document.createElement('script'); s1.src = 'config.js';
+        s1.onload = function() {
+          var s2 = document.createElement('script'); s2.src = 'supabase.js';
+          s2.onload = function() {
+            var s3 = document.createElement('script'); s3.src = 'app.js';
+            document.body.appendChild(s3);
+          };
+          document.body.appendChild(s2);
+        };
+        document.body.appendChild(s1);
+      }
+    })();
+  </script>
 </body>
 </html>
