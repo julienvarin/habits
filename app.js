@@ -745,6 +745,8 @@
     calendar: { today: [], tomorrow: [] }, calErr: null,
     news: null, newsErr: null,
     events: null, eventsErr: null,
+    transit: null, transitErr: null,
+    record: null, recordErr: null,
     lastFetched: null,
   };
 
@@ -784,9 +786,12 @@
 
   loadMorningCache();
 
-  function wmoInfo(code) {
-    if (code === 0)  return { icon: '☀️', desc: 'Clear sky' };
-    if (code <= 2)   return { icon: '🌤️', desc: 'Partly cloudy' };
+  function wmoInfo(code, hour) {
+    const h = hour !== undefined ? hour : new Date().getHours();
+    const night   = h < 6 || h >= 21;
+    const morning = h >= 6 && h < 12;
+    if (code === 0)  return { icon: night ? '🌙' : morning ? '🌄' : '☀️', desc: 'Clear' };
+    if (code <= 2)   return { icon: night ? '🌛' : '🌤️', desc: 'Partly cloudy' };
     if (code === 3)  return { icon: '☁️',  desc: 'Overcast' };
     if (code <= 49)  return { icon: '🌫️', desc: 'Foggy' };
     if (code <= 59)  return { icon: '🌦️', desc: 'Drizzle' };
@@ -894,6 +899,71 @@
     }
   }
 
+  async function fetchBVGDepartures() {
+    const now = new Date();
+    const dow = now.getDay(); // 0=Sun, 6=Sat
+    if (dow === 0 || dow === 6) { morningState.transit = []; return; }
+    const STOP_ID = '900079201'; // Rathaus Neukölln U-Bahn
+    const resp = await fetch(
+      `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?results=20&duration=60&subway=true`
+    );
+    if (!resp.ok) throw new Error(`BVG ${resp.status}`);
+    const data = await resp.json();
+    morningState.transit = (data.departures || [])
+      .filter(d => d.line?.name === 'U7' && d.direction?.toLowerCase().includes('spandau'))
+      .slice(0, 3);
+  }
+
+  async function fetchDiscogsRecord() {
+    const username = window.DISCOGS_USERNAME;
+    const token    = window.DISCOGS_TOKEN;
+    if (!username || username.startsWith('REPLACE_ME') || !token || token.startsWith('REPLACE_ME')) return;
+    const headers = {
+      'Authorization': `Discogs token=${token}`,
+      'User-Agent': 'HabitsApp/1.0 +https://julienvarin.github.io/habits/',
+    };
+    // 1. Get total count
+    const r1 = await fetch(
+      `https://api.discogs.com/users/${encodeURIComponent(username)}/collection/folders/0/releases?per_page=1&page=1`,
+      { headers }
+    );
+    if (!r1.ok) throw new Error(`Discogs ${r1.status}`);
+    const d1    = await r1.json();
+    const total = d1.pagination?.items || 0;
+    if (!total) { morningState.record = null; return; }
+    // 2. Pick today's record (stable for the day)
+    const today = new Date();
+    const seed  = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
+    const idx   = seed % total;
+    const r2    = await fetch(
+      `https://api.discogs.com/users/${encodeURIComponent(username)}/collection/folders/0/releases?per_page=1&page=${idx + 1}&sort=added&sort_order=asc`,
+      { headers }
+    );
+    if (!r2.ok) throw new Error(`Discogs ${r2.status}`);
+    const d2  = await r2.json();
+    const rel = d2.releases?.[0];
+    if (!rel) { morningState.record = null; return; }
+    const info      = rel.basic_information;
+    const releaseId = info.id;
+    const notes     = (rel.notes || []).map(n => n.value).filter(Boolean).join(' · ');
+    // 3. Get release details for country
+    let country = '';
+    try {
+      const r3 = await fetch(`https://api.discogs.com/releases/${releaseId}`, { headers });
+      if (r3.ok) { const d3 = await r3.json(); country = d3.country || ''; }
+    } catch { /* country is optional */ }
+    morningState.record = {
+      artist:     (info.artists || []).map(a => a.name.replace(/\s*\(\d+\)$/, '')).join(', ') || 'Unknown',
+      title:      info.title,
+      year:       info.year,
+      country,
+      styles:     info.styles?.length ? info.styles : (info.genres || []),
+      cover:      info.cover_image || info.thumb || '',
+      discogsUrl: `https://www.discogs.com/release/${releaseId}`,
+      notes,
+    };
+  }
+
   function buildYearGrid() {
     const now      = new Date();
     const year     = now.getFullYear();
@@ -943,13 +1013,15 @@
     } else if (!morningState.weather) {
       weatherBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading weather…</div>`;
     } else {
-      const w    = morningState.weather;
-      const cur  = w.current_condition[0];
-      const day  = w.weather[0];
-      const area = w.nearest_area[0];
-      const city = area.areaName[0].value;
-      const wmo  = wmoInfo(parseInt(cur.weatherCode));
-      const rain = day.hourly.reduce((s, h) => s + parseFloat(h.precipMM), 0);
+      const w     = morningState.weather;
+      const cur   = w.current_condition[0];
+      const day   = w.weather[0];
+      const area  = w.nearest_area[0];
+      const city  = area.areaName[0].value;
+      const hour  = new Date().getHours();
+      const wmo   = wmoInfo(parseInt(cur.weatherCode), hour);
+      const rain  = day.hourly.reduce((s, h) => s + parseFloat(h.precipMM), 0);
+      const astro = day.astronomy[0];
       weatherBody = `
         <div class="weather-main">
           <span class="weather-icon">${wmo.icon}</span>
@@ -964,6 +1036,10 @@
           <div class="weather-detail"><span class="wk">Low</span><span class="wv">${day.mintempC}°</span></div>
           <div class="weather-detail"><span class="wk">Rain</span><span class="wv">${rain > 0 ? rain.toFixed(1) + ' mm' : 'None'}</span></div>
           <div class="weather-detail"><span class="wk">Wind</span><span class="wv">${cur.windspeedKmph} km/h</span></div>
+        </div>
+        <div class="weather-sun-row">
+          <span>🌅 ${esc(astro.sunrise)}</span>
+          <span>🌇 ${esc(astro.sunset)}</span>
         </div>`;
     }
 
@@ -1029,6 +1105,66 @@
         </div>`).join('');
     }
 
+    // ---- Transit ----
+    const todayDow = new Date().getDay();
+    let transitBody;
+    if (todayDow === 0 || todayDow === 6) {
+      transitBody = `<p class="morning-muted">Weekdays only.</p>`;
+    } else if (morningState.transitErr) {
+      transitBody = `<p class="morning-error">⚠️ ${esc(morningState.transitErr)}</p>`;
+    } else if (morningState.transit === null) {
+      transitBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading departures…</div>`;
+    } else if (!morningState.transit.length) {
+      transitBody = `<p class="morning-muted">No upcoming U7 → Spandau departures.</p>`;
+    } else {
+      const nowMs = Date.now();
+      transitBody = morningState.transit.map(d => {
+        const when    = d.when    ? new Date(d.when)    : null;
+        const planned = d.plannedWhen ? new Date(d.plannedWhen) : null;
+        const timeStr = (when || planned)?.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) || '—';
+        const minsAway = when ? Math.round((when - nowMs) / 60000) : null;
+        const delayMin = d.delay ? Math.round(d.delay / 60) : 0;
+        const delayCls = delayMin > 0 ? 'late' : delayMin < 0 ? 'early' : 'on-time';
+        const delayStr = delayMin > 0 ? `+${delayMin}m` : delayMin < 0 ? `${delayMin}m` : 'On time';
+        return `<div class="transit-row">
+          <span class="transit-time">${timeStr}</span>
+          ${minsAway !== null ? `<span class="transit-mins">in ${minsAway} min</span>` : ''}
+          <span class="transit-delay ${delayCls}">${delayStr}</span>
+        </div>`;
+      }).join('');
+    }
+
+    // ---- Record of the Day ----
+    let recordBody;
+    if (!window.DISCOGS_USERNAME || window.DISCOGS_USERNAME.startsWith('REPLACE_ME')) {
+      recordBody = `<p class="cal-setup-note">Add <code>DISCOGS_USERNAME</code> and <code>DISCOGS_TOKEN</code> to <code>config.js</code>.</p>`;
+    } else if (morningState.recordErr) {
+      recordBody = `<p class="morning-error">⚠️ ${esc(morningState.recordErr)}</p>`;
+    } else if (morningState.record === null) {
+      recordBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading record…</div>`;
+    } else if (!morningState.record) {
+      recordBody = `<p class="morning-muted">Collection is empty.</p>`;
+    } else {
+      const r = morningState.record;
+      const styleTags = r.styles.map(s => `<span class="record-style-tag">${esc(s)}</span>`).join('');
+      recordBody = `
+        <div class="record-body">
+          ${r.cover ? `<a href="${esc(r.discogsUrl)}" target="_blank" rel="noopener noreferrer" class="record-cover-link">
+            <img src="${esc(r.cover)}" class="record-cover" alt="cover" loading="lazy">
+          </a>` : ''}
+          <div class="record-info">
+            <div class="record-artist">${esc(r.artist)}</div>
+            <div class="record-title">${esc(r.title)}</div>
+            <div class="record-meta">
+              ${r.year ? `<span>${r.year}</span>` : ''}
+              ${r.country ? `<span>${esc(r.country)}</span>` : ''}
+            </div>
+            ${styleTags ? `<div class="record-styles">${styleTags}</div>` : ''}
+          </div>
+        </div>
+        ${r.notes ? `<p class="record-notes">${esc(r.notes)}</p>` : ''}`;
+    }
+
     root.innerHTML = `
       <div class="morning-grid">
         ${yearCard}
@@ -1039,6 +1175,14 @@
         <div class="morning-card">
           <div class="morning-card-title">Calendar</div>
           ${calBody}
+        </div>
+        <div class="morning-card">
+          <div class="morning-card-title">U7 → Spandau</div>
+          ${transitBody}
+        </div>
+        <div class="morning-card">
+          <div class="morning-card-title">Record of the Day</div>
+          ${recordBody}
         </div>
         <div class="morning-card">
           <div class="morning-card-title">World News</div>
@@ -1056,19 +1200,34 @@
     const stale    = !morningState.lastFetched || (Date.now() - morningState.lastFetched > STALE_MS);
 
     if (stale) {
-      morningState.weather = null; morningState.weatherErr = null;
-      morningState.news    = null; morningState.newsErr    = null;
-      morningState.events  = null; morningState.eventsErr  = null;
-      morningState.calErr  = null;
+      morningState.weather  = null; morningState.weatherErr = null;
+      morningState.news     = null; morningState.newsErr    = null;
+      morningState.events   = null; morningState.eventsErr  = null;
+      morningState.calErr   = null;
       morningState.calendar = { today: [], tomorrow: [] };
-      renderMorning();
+      morningState.record   = null; morningState.recordErr  = null;
+    }
+    // Transit is always refreshed (time-sensitive)
+    morningState.transit = null; morningState.transitErr = null;
 
-      await Promise.all([
+    renderMorning();
+
+    const fetches = [
+      fetchBVGDepartures().catch(err => { morningState.transitErr = err.message; }),
+    ];
+    if (stale) {
+      fetches.push(
         fetchWeather().catch(err => { morningState.weatherErr = err.message; }),
         fetchCalendarEvents().catch(err => { morningState.calErr = err.message; }),
         fetchNews(),
         fetchBerlinEvents(),
-      ]);
+        fetchDiscogsRecord().catch(err => { morningState.recordErr = err.message; }),
+      );
+    }
+
+    await Promise.all(fetches);
+
+    if (stale) {
       morningState.lastFetched = Date.now();
       saveMorningCache();
     }

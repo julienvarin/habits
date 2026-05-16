@@ -6,3 +6,8 @@ window.SUPABASE_ANON_KEY = "REPLACE_ME_WITH_YOUR_ANON_KEY";
 // Optional: Google Calendar integration (Morning tab).
 // Get this from: Google Calendar → Settings → your calendar → "Secret address in iCal format"
 window.JULIEN_CALENDAR_ICAL_URL = "REPLACE_ME_WITH_YOUR_ICAL_URL";
+
+// Optional: Discogs integration — Record of the Day (Morning tab).
+// Token: discogs.com → Settings → Developers → Generate new token
+window.DISCOGS_USERNAME = "REPLACE_ME_WITH_YOUR_DISCOGS_USERNAME";
+window.DISCOGS_TOKEN    = "REPLACE_ME_WITH_YOUR_DISCOGS_TOKEN";

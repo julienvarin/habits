@@ -615,6 +615,65 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 .news-title { font-size: 14px; font-weight: 500; color: var(--fg); line-height: 1.35; margin-bottom: 3px; }
 .news-meta  { font-size: 11px; color: var(--fg-dim); }
 
+/* Sunrise / sunset row */
+.weather-sun-row {
+  display: flex; justify-content: space-around;
+  margin-top: 10px; padding-top: 10px;
+  border-top: 1px solid var(--border);
+  font-size: 13px; color: var(--fg-2);
+}
+
+/* Transit departures */
+.transit-row {
+  display: flex; align-items: center; gap: 10px;
+  padding: 8px 0; border-bottom: 1px solid var(--border);
+}
+.transit-row:first-child { padding-top: 0; }
+.transit-row:last-child  { border-bottom: none; padding-bottom: 0; }
+.transit-time {
+  font-size: 18px; font-weight: 700; letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums; color: var(--fg); min-width: 52px;
+}
+.transit-mins { font-size: 13px; color: var(--fg-dim); flex: 1; }
+.transit-delay {
+  font-size: 12px; font-weight: 600; padding: 2px 8px; border-radius: 99px;
+}
+.transit-delay.on-time { background: color-mix(in srgb, #34c759 15%, white); color: #1a7a32; }
+.transit-delay.late    { background: color-mix(in srgb, #ff3b30 15%, white); color: #c0392b; }
+.transit-delay.early   { background: color-mix(in srgb, #007aff 15%, white); color: #1a5fa8; }
+.morning-muted { font-size: 14px; color: var(--fg-dim); margin: 0; }
+
+/* Record of the Day */
+.record-body { display: flex; gap: 14px; align-items: flex-start; }
+.record-cover-link { flex-shrink: 0; }
+.record-cover {
+  width: 90px; height: 90px; object-fit: cover;
+  border-radius: var(--radius-sm); display: block;
+  border: 1px solid var(--border);
+}
+.record-info { flex: 1; min-width: 0; }
+.record-artist {
+  font-size: 11px; font-weight: 700; color: var(--fg-dim);
+  text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 4px;
+}
+.record-title {
+  font-size: 15px; font-weight: 700; letter-spacing: -0.02em;
+  color: var(--fg); line-height: 1.2; margin-bottom: 8px;
+}
+.record-meta {
+  display: flex; gap: 8px; margin-bottom: 8px;
+  font-size: 12px; color: var(--fg-dim);
+}
+.record-styles { display: flex; flex-wrap: wrap; gap: 4px; }
+.record-style-tag {
+  font-size: 11px; font-weight: 500; padding: 2px 8px; border-radius: 99px;
+  background: var(--bg-inset); border: 1px solid var(--border); color: var(--fg-2);
+}
+.record-notes {
+  margin: 12px 0 0; font-size: 13px; color: var(--fg-dim);
+  padding-top: 10px; border-top: 1px solid var(--border); line-height: 1.5;
+}
+
 /* Loading / error inline states (morning view) */
 .morning-loading {
   display: flex; align-items: center; gap: 10px;
