@@ -573,7 +573,8 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 }
 .weather-temp-big sup { font-size: 16px; font-weight: 400; color: var(--fg-dim); vertical-align: super; }
 .weather-desc     { font-size: 14px; color: var(--fg-2); margin-top: 2px; }
-.weather-location { font-size: 12px; color: var(--fg-dim); margin-top: 2px; }
+.weather-location { font-size: 12px; color: var(--fg-dim); margin-top: 2px; cursor: pointer; user-select: none; }
+.weather-location:hover { color: var(--fg-2); }
 .weather-details { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .weather-detail {
   background: var(--bg-inset); border-radius: var(--radius-sm);
