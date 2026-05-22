@@ -29,6 +29,7 @@
 
     <section id="view-morning" class="view"></section>
     <section id="view-today"   class="view active"></section>
+    <section id="view-todo"    class="view"></section>
     <section id="view-history" class="view"></section>
     <section id="view-stats"   class="view"></section>
 
@@ -40,6 +41,9 @@
       </button>
       <button class="tab active" data-view="today"   role="tab" aria-selected="true">
         <span class="tab-icon">✓</span>Today
+      </button>
+      <button class="tab" data-view="todo"    role="tab" aria-selected="false">
+        <span class="tab-icon">☐</span>Todo
       </button>
       <button class="tab" data-view="history" role="tab" aria-selected="false">
         <span class="tab-icon">▦</span>History
@@ -73,7 +77,11 @@
         s1.onload = function() {
           var s2 = document.createElement('script'); s2.src = 'supabase.js';
           s2.onload = function() {
-            var s3 = document.createElement('script'); s3.src = 'app.js';
+            var s3 = document.createElement('script'); s3.src = 'todos.js';
+            s3.onload = function() {
+              var s4 = document.createElement('script'); s4.src = 'app.js';
+              document.body.appendChild(s4);
+            };
             document.body.appendChild(s3);
           };
           document.body.appendChild(s2);
