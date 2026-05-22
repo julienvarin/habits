@@ -231,7 +231,7 @@
       cells.push(
         `<div class="cal-cell ${on?'on':''} ${isFut?'future':''} ${ds===todayS?'today':''}"
               data-action="toggle-day" data-id="${habitId}" data-date="${ds}"
-              title="${ds}"></div>`);
+              title="${ds}"><span class="cal-dn">${date.getDate()}</span></div>`);
     }
     const rows = [`<div class="cal-row">${cells.join('')}</div>`];
 
@@ -1273,8 +1273,8 @@
       document.querySelectorAll('.view').forEach(s => s.classList.remove('active'));
       document.getElementById(`view-${v}`).classList.add('active');
 
-      const titles = { morning:'Morning', today:'Today', history:'History', stats:'Stats' };
-      document.getElementById('page-title').textContent = titles[v];
+      const titles = { morning:'Morning', today:'Today', todo:'Todo', history:'History', stats:'Stats' };
+      document.getElementById('page-title').textContent = titles[v] || v;
 
       // Show/hide FAB
       document.getElementById('fab').style.display = v === 'today' ? '' : 'none';
@@ -1313,4 +1313,5 @@
   // Init
   // ============================================================
   load();
+  if (window.initTodo) window.initTodo();
 })();
