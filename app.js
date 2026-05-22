@@ -801,9 +801,11 @@
     return { icon: '⛈️', desc: 'Thunderstorm' };
   }
 
+  const WEATHER_CITY_KEY = 'habits.weatherCity';
+
   async function fetchWeather() {
-    // wttr.in: single request, IP-based location, no permission needed
-    const resp = await fetch('https://wttr.in/?format=j1');
+    const city = localStorage.getItem(WEATHER_CITY_KEY) || 'Paris';
+    const resp = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`);
     if (!resp.ok) throw new Error(`Weather ${resp.status}`);
     morningState.weather = await resp.json();
   }
@@ -885,7 +887,7 @@
 
   async function fetchNews() {
     try {
-      morningState.news = await fetchRSSFeed('https://feeds.bbci.co.uk/news/world/rss.xml', 5);
+      morningState.news = await fetchRSSFeed('https://www.lemonde.fr/rss/une.xml', 5);
     } catch (err) {
       morningState.newsErr = err.message;
     }
@@ -1028,7 +1030,7 @@
           <div>
             <div class="weather-temp-big">${cur.temp_C}<sup>°C</sup></div>
             <div class="weather-desc">${wmo.desc}</div>
-            <div class="weather-location">📍 ${esc(city)}</div>
+            <div class="weather-location" data-action="change-city" title="Click to change city">📍 ${esc(city)} ✏️</div>
           </div>
         </div>
         <div class="weather-details">
@@ -1084,7 +1086,6 @@
         <div class="news-item">
           <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
             <div class="news-title">${esc(item.title)}</div>
-            <div class="news-meta">${esc(item.pubDate)}</div>
           </a>
         </div>`).join('');
     }
@@ -1100,7 +1101,6 @@
         <div class="news-item">
           <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
             <div class="news-title">${esc(item.title)}</div>
-            <div class="news-meta">${esc(item.pubDate)}</div>
           </a>
         </div>`).join('');
     }
@@ -1185,7 +1185,7 @@
           ${recordBody}
         </div>
         <div class="morning-card">
-          <div class="morning-card-title">World News</div>
+          <div class="morning-card-title">Actualités</div>
           ${newsBody}
         </div>
         <div class="morning-card">
@@ -1243,7 +1243,17 @@
     if (!el) return;
     const { action, id, date } = el.dataset;
 
-    if (action === 'toggle') {
+    if (action === 'change-city') {
+      const current = localStorage.getItem(WEATHER_CITY_KEY) || 'Paris';
+      const city = prompt('Change weather city:', current);
+      if (city && city.trim()) {
+        localStorage.setItem(WEATHER_CITY_KEY, city.trim());
+        morningState.weather = null;
+        morningState.weatherErr = null;
+        renderMorning();
+        fetchWeather().catch(err => { morningState.weatherErr = err.message; }).then(() => renderMorning());
+      }
+    } else if (action === 'toggle') {
       if (e.target.closest('[data-action="edit"]')) return;
       toggle(id, todayStr());
     } else if (action === 'edit') {
