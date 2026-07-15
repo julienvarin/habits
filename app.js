@@ -786,19 +786,29 @@
 
   loadMorningCache();
 
-  function wmoInfo(code, hour) {
+  // wttr.in reports World Weather Online (WWO) codes (113–395), NOT WMO codes.
+  // Map each to an icon; the human-readable label comes from wttr's own
+  // weatherDesc, so a clear day never renders as a thunderstorm.
+  const WWO_ICONS = {
+    113: '☀️', 116: '🌤️', 119: '☁️', 122: '☁️', 143: '🌫️',
+    176: '🌦️', 179: '🌨️', 182: '🌨️', 185: '🌧️', 200: '⛈️',
+    227: '🌨️', 230: '❄️', 248: '🌫️', 260: '🌫️',
+    263: '🌦️', 266: '🌧️', 281: '🌧️', 284: '🌧️',
+    293: '🌦️', 296: '🌧️', 299: '🌧️', 302: '🌧️', 305: '🌧️', 308: '🌧️',
+    311: '🌧️', 314: '🌧️', 317: '🌨️', 320: '🌨️',
+    323: '🌨️', 326: '🌨️', 329: '❄️', 332: '❄️', 335: '❄️', 338: '❄️',
+    350: '🧊', 353: '🌦️', 356: '🌧️', 359: '🌧️',
+    362: '🌨️', 365: '🌨️', 368: '🌨️', 371: '❄️',
+    374: '🧊', 377: '🧊', 386: '⛈️', 389: '⛈️', 392: '⛈️', 395: '⛈️',
+  };
+
+  function weatherInfo(code, desc, hour) {
     const h = hour !== undefined ? hour : new Date().getHours();
-    const night   = h < 6 || h >= 21;
-    const morning = h >= 6 && h < 12;
-    if (code === 0)  return { icon: night ? '🌙' : morning ? '🌄' : '☀️', desc: 'Clear' };
-    if (code <= 2)   return { icon: night ? '🌛' : '🌤️', desc: 'Partly cloudy' };
-    if (code === 3)  return { icon: '☁️',  desc: 'Overcast' };
-    if (code <= 49)  return { icon: '🌫️', desc: 'Foggy' };
-    if (code <= 59)  return { icon: '🌦️', desc: 'Drizzle' };
-    if (code <= 69)  return { icon: '🌧️', desc: 'Rain' };
-    if (code <= 79)  return { icon: '❄️',  desc: 'Snow' };
-    if (code <= 84)  return { icon: '🌦️', desc: 'Rain showers' };
-    return { icon: '⛈️', desc: 'Thunderstorm' };
+    const night = h < 6 || h >= 21;
+    let icon = WWO_ICONS[code] || '☁️';
+    if (night && code === 113) icon = '🌙';
+    else if (night && code === 116) icon = '🌛';
+    return { icon, desc: desc || 'Clear' };
   }
 
   const WEATHER_CITY_KEY = 'habits.weatherCity';
@@ -1021,16 +1031,22 @@
       const area  = w.nearest_area[0];
       const city  = area.areaName[0].value;
       const hour  = new Date().getHours();
-      const wmo   = wmoInfo(parseInt(cur.weatherCode), hour);
+      const wdesc = cur.weatherDesc?.[0]?.value?.trim() || '';
+      const wx    = weatherInfo(parseInt(cur.weatherCode, 10), wdesc, hour);
       const rain  = day.hourly.reduce((s, h) => s + parseFloat(h.precipMM), 0);
       const astro = day.astronomy[0];
       weatherBody = `
         <div class="weather-main">
-          <span class="weather-icon">${wmo.icon}</span>
+          <span class="weather-icon">${wx.icon}</span>
           <div>
             <div class="weather-temp-big">${cur.temp_C}<sup>°C</sup></div>
-            <div class="weather-desc">${wmo.desc}</div>
-            <div class="weather-location" data-action="change-city" title="Click to change city">📍 ${esc(city)} ✏️</div>
+            <div class="weather-desc">${esc(wx.desc)}</div>
+            <button class="weather-location" data-action="change-city" aria-label="Change city">
+              <svg class="weather-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="2.5"/>
+              </svg>
+              <span class="weather-city">${esc(city)}</span>
+            </button>
           </div>
         </div>
         <div class="weather-details">
