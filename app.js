@@ -916,13 +916,18 @@
     const dow = now.getDay(); // 0=Sun, 6=Sat
     if (dow === 0 || dow === 6) { morningState.transit = []; return; }
     const STOP_ID = '900079201'; // Rathaus Neukölln U-Bahn
+    // Request U-Bahn only. In this API every product flag defaults to true, so
+    // `subway=true` alone does NOT exclude buses/trams — at a busy hub those
+    // fill the `results` budget and crowd out the U7 departures we want.
+    const products = 'subway=true&suburban=false&tram=false&bus=false&ferry=false&express=false&regional=false';
     const resp = await fetch(
-      `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?results=20&duration=60&subway=true`
+      `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?duration=90&results=30&${products}`
     );
     if (!resp.ok) throw new Error(`BVG ${resp.status}`);
     const data = await resp.json();
     morningState.transit = (data.departures || [])
-      .filter(d => d.line?.name === 'U7' && d.direction?.toLowerCase().includes('spandau'))
+      .filter(d => d.line?.name?.replace(/\s+/g, '') === 'U7'
+                && d.direction?.toLowerCase().includes('spandau'))
       .slice(0, 3);
   }
 
