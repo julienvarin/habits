@@ -1021,7 +1021,7 @@
     // ---- Weather ----
     let weatherBody;
     if (morningState.weatherErr) {
-      weatherBody = `<p class="morning-error">⚠️ ${esc(morningState.weatherErr)}</p>`;
+      weatherBody = `<p class="morning-error">${esc(morningState.weatherErr)}</p>`;
     } else if (!morningState.weather) {
       weatherBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading weather…</div>`;
     } else {
@@ -1056,8 +1056,8 @@
           <div class="weather-detail"><span class="wk">Wind</span><span class="wv">${cur.windspeedKmph} km/h</span></div>
         </div>
         <div class="weather-sun-row">
-          <span>🌅 ${esc(astro.sunrise)}</span>
-          <span>🌇 ${esc(astro.sunset)}</span>
+          <span><span class="sun-k">Sunrise</span> ${esc(astro.sunrise)}</span>
+          <span><span class="sun-k">Sunset</span> ${esc(astro.sunset)}</span>
         </div>`;
     }
 
@@ -1066,7 +1066,7 @@
     if (!window.JULIEN_CALENDAR_ICAL_URL || window.JULIEN_CALENDAR_ICAL_URL.startsWith('REPLACE_ME')) {
       calBody = `<p class="cal-setup-note">Add <code>JULIEN_CALENDAR_ICAL_URL</code> to <code>config.js</code> to connect your calendar.</p>`;
     } else if (morningState.calErr) {
-      calBody = `<p class="morning-error">⚠️ ${esc(morningState.calErr)}</p>`;
+      calBody = `<p class="morning-error">${esc(morningState.calErr)}</p>`;
     } else if (!morningState.calendar.today.length && !morningState.calendar.tomorrow.length && !morningState.calErr) {
       calBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading calendar…</div>`;
     } else {
@@ -1094,7 +1094,7 @@
     // ---- News ----
     let newsBody;
     if (morningState.newsErr) {
-      newsBody = `<p class="morning-error">⚠️ ${esc(morningState.newsErr)}</p>`;
+      newsBody = `<p class="morning-error">${esc(morningState.newsErr)}</p>`;
     } else if (!morningState.news) {
       newsBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading news…</div>`;
     } else {
@@ -1109,7 +1109,7 @@
     // ---- Berlin events ----
     let eventsBody;
     if (morningState.eventsErr) {
-      eventsBody = `<p class="morning-error">⚠️ ${esc(morningState.eventsErr)}</p>`;
+      eventsBody = `<p class="morning-error">${esc(morningState.eventsErr)}</p>`;
     } else if (!morningState.events) {
       eventsBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading events…</div>`;
     } else {
@@ -1127,7 +1127,7 @@
     if (todayDow === 0 || todayDow === 6) {
       transitBody = `<p class="morning-muted">Weekdays only.</p>`;
     } else if (morningState.transitErr) {
-      transitBody = `<p class="morning-error">⚠️ ${esc(morningState.transitErr)}</p>`;
+      transitBody = `<p class="morning-error">${esc(morningState.transitErr)}</p>`;
     } else if (morningState.transit === null) {
       transitBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading departures…</div>`;
     } else if (!morningState.transit.length) {
@@ -1155,7 +1155,7 @@
     if (!window.DISCOGS_USERNAME || window.DISCOGS_USERNAME.startsWith('REPLACE_ME')) {
       recordBody = `<p class="cal-setup-note">Add <code>DISCOGS_USERNAME</code> and <code>DISCOGS_TOKEN</code> to <code>config.js</code>.</p>`;
     } else if (morningState.recordErr) {
-      recordBody = `<p class="morning-error">⚠️ ${esc(morningState.recordErr)}</p>`;
+      recordBody = `<p class="morning-error">${esc(morningState.recordErr)}</p>`;
     } else if (morningState.record === null) {
       recordBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading record…</div>`;
     } else if (!morningState.record) {
