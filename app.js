@@ -494,90 +494,271 @@
   // ============================================================
   // Render: Stats
   // ============================================================
+  // ---- Stats: scope + aggregate helpers ----
+  let statsHabit = null; // null = all habits; otherwise a habit object
+  const ACCENT = '#34c759';
+  const WD_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+  const createdStr = h => (h.created_at ? fmtDate(new Date(h.created_at)) : '0000-01-01');
+
+  // Share of the scope completed on a given day (0..1), or null if nothing was
+  // active yet. For one habit that's 0/1; for "all" it's done/active habits.
+  function dayFraction(dstr, scope) {
+    if (scope) {
+      if (dstr < createdStr(scope)) return null;
+      return hasTick(scope.id, dstr) ? 1 : 0;
+    }
+    const active = state.habits.filter(h => dstr >= createdStr(h));
+    if (!active.length) return null;
+    return active.filter(h => hasTick(h.id, dstr)).length / active.length;
+  }
+
+  // 7-day trailing completion rate for each of the last `days` days (%)
+  function trendSeries(scope, days) {
+    const base = new Date(), out = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = shiftDays(base, -i);
+      let sum = 0, cnt = 0;
+      for (let j = 0; j < 7; j++) {
+        const f = dayFraction(fmtDate(shiftDays(d, -j)), scope);
+        if (f !== null) { sum += f; cnt++; }
+      }
+      out.push({ d: `${d.getMonth() + 1}/${d.getDate()}`, v: cnt ? Math.round((sum / cnt) * 100) : null });
+    }
+    // Drop the leading stretch before any data existed
+    const first = out.findIndex(p => p.v !== null);
+    return first < 0 ? [] : out.slice(first).map(p => ({ ...p, v: p.v ?? 0 }));
+  }
+
+  function weekdayRhythm(scope, days) {
+    const sums = new Array(7).fill(0), cnts = new Array(7).fill(0), base = new Date();
+    for (let i = 0; i < days; i++) {
+      const d = shiftDays(base, -i);
+      const f = dayFraction(fmtDate(d), scope);
+      if (f === null) continue;
+      const wd = d.getDay();
+      sums[wd] += f; cnts[wd]++;
+    }
+    return [1, 2, 3, 4, 5, 6, 0].map(wd => ({
+      full: WD_FULL[wd], letter: WD_FULL[wd][0],
+      v: cnts[wd] ? Math.round((sums[wd] / cnts[wd]) * 100) : 0, has: cnts[wd] > 0,
+    }));
+  }
+
+  // Mean daily completion rate over a window [startAgo, startAgo+len) days back
+  function scopeRate(scope, startAgo, len) {
+    let sum = 0, cnt = 0, base = new Date();
+    for (let i = startAgo; i < startAgo + len; i++) {
+      const f = dayFraction(fmtDate(shiftDays(base, -i)), scope);
+      if (f !== null) { sum += f; cnt++; }
+    }
+    return cnt ? (sum / cnt) * 100 : null;
+  }
+
+  function areaFigure(pts, color) {
+    if (pts.length < 2) return `<p class="viz-empty">Not enough history yet — keep ticking.</p>`;
+    const n = pts.length, W = 340, H = 132, padL = 6, padR = 12, padT = 12, padB = 18;
+    const pw = W - padL - padR, ph = H - padT - padB, base = padT + ph;
+    const X = i => padL + (i / (n - 1)) * pw;
+    const Y = v => padT + (1 - v / 100) * ph;
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
+    const area = `M${X(0).toFixed(1)},${base} ${pts.map((p, i) => `L${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ')} L${X(n - 1).toFixed(1)},${base} Z`;
+    const grid = [0, 50, 100].map(g =>
+      `<line class="viz-grid" x1="${padL}" x2="${W - padR}" y1="${Y(g)}" y2="${Y(g)}"/>` +
+      `<text class="viz-axis" x="${W - padR + 1}" y="${Y(g) + 3}">${g}</text>`).join('');
+    const last = pts[n - 1];
+    const geo = { padL, pw, padT, ph, n, W };
+    return `
+      <div class="viz-wrap">
+        <svg class="viz-area" viewBox="0 0 ${W} ${H}" style="--c:${color}"
+             data-pts='${JSON.stringify(pts)}' data-geo='${JSON.stringify(geo)}'>
+          ${grid}
+          <path class="viz-fill" d="${area}"/>
+          <path class="viz-line" d="${line}"/>
+          <line class="viz-cross" x1="0" x2="0" y1="${padT}" y2="${base}" style="display:none"/>
+          <circle class="viz-dot" cx="${X(n - 1).toFixed(1)}" cy="${Y(last.v).toFixed(1)}" r="3.4"/>
+          <circle class="viz-cursor" r="3.4" style="display:none"/>
+        </svg>
+        <div class="viz-tip" style="display:none"></div>
+        <div class="viz-xaxis"><span>${esc(pts[0].d)}</span><span>${esc(last.d)}</span></div>
+      </div>`;
+  }
+
+  function barsFigure(rhythm, color) {
+    const W = 340, H = 118, padL = 4, padR = 4, padT = 16, padB = 18;
+    const pw = W - padL - padR, ph = H - padT - padB, base = padT + ph;
+    const band = pw / 7, barW = Math.min(26, band - 10);
+    const maxV = Math.max(...rhythm.map(r => r.v), 1);
+    const bestI = rhythm.reduce((b, r, i) => (r.v > rhythm[b].v ? i : b), 0);
+    const bars = rhythm.map((r, i) => {
+      const cx = padL + band * i + band / 2;
+      const h = r.has ? (r.v / 100) * ph : 0;
+      const y = base - h;
+      const isBest = i === bestI && r.v > 0;
+      return `
+        <g class="viz-bar" data-full="${esc(r.full)}" data-v="${r.v}">
+          <rect class="viz-bar-hit" x="${cx - band / 2}" y="${padT}" width="${band}" height="${ph}"/>
+          <rect class="viz-bar-rect${isBest ? ' best' : ''}" x="${(cx - barW / 2).toFixed(1)}" y="${y.toFixed(1)}"
+                width="${barW.toFixed(1)}" height="${Math.max(h, r.has ? 2 : 0).toFixed(1)}" rx="3"/>
+          ${isBest ? `<text class="viz-bar-cap" x="${cx.toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle">${r.v}%</text>` : ''}
+          <text class="viz-axis" x="${cx.toFixed(1)}" y="${base + 12}" text-anchor="middle">${r.letter}</text>
+        </g>`;
+    }).join('');
+    return `
+      <div class="viz-wrap">
+        <svg class="viz-bars" viewBox="0 0 ${W} ${H}" style="--c:${color}">
+          <line class="viz-grid" x1="${padL}" x2="${W - padR}" y1="${base}" y2="${base}"/>
+          ${bars}
+        </svg>
+        <div class="viz-tip" style="display:none"></div>
+      </div>`;
+  }
+
   function renderStats() {
     const root = document.getElementById('view-stats');
     if (state.loading) return;
 
     if (!state.habits.length) {
-      root.innerHTML = `<div class="empty"><div class="empty-icon">📊</div><h2>No habits yet</h2></div>`;
+      statsHabit = null;
+      root.innerHTML = `<div class="empty"><h2>No habits yet</h2><p>Add a habit to start tracking your stats.</p></div>`;
       return;
     }
+    // Keep scope valid if the selected habit was removed
+    if (statsHabit && !state.habits.some(h => h.id === statsHabit.id)) statsHabit = null;
+    const scope = statsHabit;
+    const color = scope ? scope.color : ACCENT;
 
-    const today    = todayStr();
-    const doneToday = state.habits.filter(h => hasTick(h.id, today)).length;
-    const total    = state.habits.length;
-    const pctToday = total ? Math.round((doneToday / total) * 100) : 0;
-    const totalEver = state.entries.size;
-    const bestStreak = Math.max(0, ...state.habits.map(h => longestStreak(h.id)));
-
-    const overview = `
-      <div class="stats-overview">
-        <div class="stat-tile">
-          <div class="num">${doneToday}<span style="font-size:16px;font-weight:400;color:var(--fg-dim)">/${total}</span></div>
-          <div class="lbl">Done today</div>
-        </div>
-        <div class="stat-tile">
-          <div class="num" style="color:var(--accent)">${pctToday}%</div>
-          <div class="lbl">Today's rate</div>
-        </div>
-        <div class="stat-tile">
-          <div class="num">${totalEver}</div>
-          <div class="lbl">Total ticks</div>
-        </div>
-        <div class="stat-tile">
-          <div class="num">🔥${bestStreak}</div>
-          <div class="lbl">Best streak (any)</div>
-        </div>
+    // ---- Filter pills ----
+    const pill = (label, active, dataAttr, dot) =>
+      `<button class="stats-pill${active ? ' active' : ''}" ${dataAttr}>${dot ? `<span class="stats-dot" style="background:${dot}"></span>` : ''}${esc(label)}</button>`;
+    const pills = `
+      <div class="stats-filter">
+        ${pill('All habits', !scope, 'data-action="stats-filter" data-habit="all"')}
+        ${state.habits.map(h => pill(h.name, scope && scope.id === h.id, `data-action="stats-filter" data-habit="${h.id}"`, h.color)).join('')}
       </div>`;
 
-    function buildStatsCard(h) {
-      const cur  = currentStreak(h.id);
-      const lng  = longestStreak(h.id);
-      const r7   = completionRate(h.id, 7);
-      const r30  = completionRate(h.id, 30);
-      return `
-        <div class="stats-habit-card" style="color:${h.color}">
-          <div class="stats-habit-head">
-            <h3>${esc(h.name)}</h3>
-            ${cur > 0 ? `<span style="font-size:13px;color:var(--fg-dim)">🔥 ${cur}d</span>` : ''}
-          </div>
-          <div class="stats-metrics">
-            <div class="stats-metric"><div class="v">${cur}</div><div class="k">Current<br>streak</div></div>
-            <div class="stats-metric"><div class="v">${lng}</div><div class="k">Longest<br>streak</div></div>
-            <div class="stats-metric"><div class="v">${r7}%</div><div class="k">Last<br>7 days</div></div>
-            <div class="stats-metric"><div class="v">${r30}%</div><div class="k">Last<br>30 days</div></div>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <div class="rate-bar-wrap">
-              <span class="rate-lbl">7 days</span>
-              <div class="rate-bar"><div class="rate-fill" style="width:${r7}%"></div></div>
-              <span class="rate-pct">${r7}%</span>
-            </div>
-            <div class="rate-bar-wrap">
-              <span class="rate-lbl">30 days</span>
-              <div class="rate-bar"><div class="rate-fill" style="width:${r30}%"></div></div>
-              <span class="rate-pct">${r30}%</span>
-            </div>
-          </div>
+    // ---- KPI tiles ----
+    const today = todayStr();
+    let tiles;
+    if (!scope) {
+      const doneToday = state.habits.filter(h => hasTick(h.id, today)).length;
+      const total = state.habits.length;
+      const r30 = scopeRate(null, 0, 30) ?? 0;
+      const best = Math.max(0, ...state.habits.map(h => longestStreak(h.id)));
+      tiles = [
+        [`${doneToday}<span class="stat-sub">/${total}</span>`, 'Done today'],
+        [`${Math.round(r30)}<span class="stat-sub">%</span>`, '30-day rate'],
+        [`${best}<span class="stat-sub">d</span>`, 'Best streak'],
+        [`${state.entries.size}`, 'Total ticks'],
+      ];
+    } else {
+      tiles = [
+        [`${currentStreak(scope.id)}<span class="stat-sub">d</span>`, 'Current streak'],
+        [`${longestStreak(scope.id)}<span class="stat-sub">d</span>`, 'Longest streak'],
+        [`${completionRate(scope.id, 30)}<span class="stat-sub">%</span>`, '30-day rate'],
+        [`${tickDates(scope.id).length}`, 'Total ticks'],
+      ];
+    }
+    const overview = `<div class="stats-overview">${tiles.map(([v, l]) =>
+      `<div class="stat-tile"><div class="num">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
+
+    // ---- Consistency trend (with momentum vs prior 4 weeks) ----
+    const trend = trendSeries(scope, 56);
+    const recent = scopeRate(scope, 0, 28), prior = scopeRate(scope, 28, 28);
+    let momentum = '';
+    if (recent !== null && prior !== null) {
+      const delta = Math.round(recent - prior);
+      const dir = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+      const arrow = delta > 0 ? '▲' : delta < 0 ? '▼' : '→';
+      momentum = `<span class="viz-delta ${dir}">${arrow} ${Math.abs(delta)}% vs prev 4 wks</span>`;
+    }
+    const trendCard = `
+      <div class="stats-card">
+        <div class="stats-card-head"><span class="stats-card-title">Consistency</span>${momentum}</div>
+        <div class="stats-card-sub">7-day completion rate · last 8 weeks</div>
+        ${areaFigure(trend, color)}
+      </div>`;
+
+    // ---- Weekly rhythm ----
+    const rhythm = weekdayRhythm(scope, 84);
+    const anyData = rhythm.some(r => r.has);
+    const best = rhythm.reduce((b, r) => (r.v > b.v ? r : b), rhythm[0]);
+    const rhythmCard = `
+      <div class="stats-card">
+        <div class="stats-card-head"><span class="stats-card-title">Weekly rhythm</span></div>
+        <div class="stats-card-sub">${anyData ? `Most consistent on <strong>${esc(best.full)}</strong>` : 'Completion rate by weekday'}</div>
+        ${barsFigure(rhythm, color)}
+      </div>`;
+
+    // ---- By-habit breakdown (all scope only) ----
+    let breakdown = '';
+    if (!scope && state.habits.length > 1) {
+      const rows = state.habits
+        .map(h => ({ h, r: completionRate(h.id, 30) }))
+        .sort((a, b) => b.r - a.r)
+        .map(({ h, r }) => `
+          <button class="stats-rank" data-action="stats-filter" data-habit="${h.id}">
+            <span class="stats-dot" style="background:${h.color}"></span>
+            <span class="stats-rank-name">${esc(h.name)}</span>
+            <span class="stats-rank-track"><span class="stats-rank-fill" style="width:${r}%;background:${h.color}"></span></span>
+            <span class="stats-rank-pct">${r}%</span>
+          </button>`).join('');
+      breakdown = `
+        <div class="stats-card">
+          <div class="stats-card-head"><span class="stats-card-title">By habit</span></div>
+          <div class="stats-card-sub">30-day completion · tap to focus</div>
+          <div class="stats-rank-list">${rows}</div>
         </div>`;
     }
 
-    const groups = groupBySection(state.habits);
-    let cardsHtml = '';
-    for (const [section, habits] of groups) {
-      const cards = habits.map(buildStatsCard).join('');
-      if (groups.size === 1 && !section) {
-        cardsHtml += cards;
-      } else {
-        cardsHtml += `
-          <div class="section-group">
-            <div class="section-header">${esc(section || 'General')}</div>
-            ${cards}
-          </div>`;
-      }
-    }
+    root.innerHTML = pills + overview + trendCard + rhythmCard + breakdown;
+    wireStatsCharts(root);
+  }
 
-    root.innerHTML = overview + cardsHtml;
+  // Pointer-driven crosshair/tooltip for the stats charts
+  function wireStatsCharts(root) {
+    root.querySelectorAll('.viz-area').forEach(svg => {
+      const pts = JSON.parse(svg.dataset.pts), geo = JSON.parse(svg.dataset.geo);
+      const wrap = svg.closest('.viz-wrap'), tip = wrap.querySelector('.viz-tip');
+      const cross = svg.querySelector('.viz-cross'), cursor = svg.querySelector('.viz-cursor');
+      const X = i => geo.padL + (i / (geo.n - 1)) * geo.pw;
+      const Y = v => geo.padT + (1 - v / 100) * geo.ph;
+      const move = e => {
+        const rect = svg.getBoundingClientRect();
+        const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+        let i = Math.round((cx / rect.width) * (geo.n - 1));
+        i = Math.max(0, Math.min(geo.n - 1, i));
+        const p = pts[i], x = X(i), y = Y(p.v);
+        cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.style.display = '';
+        cursor.setAttribute('cx', x); cursor.setAttribute('cy', y); cursor.style.display = '';
+        tip.innerHTML = `<strong>${p.v}%</strong> · ${esc(p.d)}`;
+        tip.style.display = '';
+        tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth, (x / geo.W) * rect.width - tip.offsetWidth / 2)) + 'px';
+      };
+      const hide = () => { cross.style.display = 'none'; cursor.style.display = 'none'; tip.style.display = 'none'; };
+      svg.addEventListener('pointermove', move);
+      svg.addEventListener('pointerdown', move);
+      svg.addEventListener('pointerleave', hide);
+    });
+    root.querySelectorAll('.viz-bars').forEach(svg => {
+      const wrap = svg.closest('.viz-wrap'), tip = wrap.querySelector('.viz-tip');
+      svg.querySelectorAll('.viz-bar').forEach(g => {
+        const show = e => {
+          const rect = svg.getBoundingClientRect();
+          const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+          tip.innerHTML = `<strong>${g.dataset.v}%</strong> · ${esc(g.dataset.full)}`;
+          tip.style.display = '';
+          tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth, cx - tip.offsetWidth / 2)) + 'px';
+          svg.querySelectorAll('.viz-bar').forEach(b => b.classList.toggle('on', b === g));
+        };
+        g.addEventListener('pointerenter', show);
+        g.addEventListener('pointerdown', show);
+      });
+      svg.addEventListener('pointerleave', () => {
+        tip.style.display = 'none';
+        svg.querySelectorAll('.viz-bar').forEach(b => b.classList.remove('on'));
+      });
+    });
   }
 
   // ============================================================
@@ -1338,6 +1519,10 @@
       renderHistory();
     } else if (action === 'history-fwd') {
       if (state.historyOffset > 0) { state.historyOffset--; renderHistory(); }
+    } else if (action === 'stats-filter') {
+      const h = el.dataset.habit;
+      statsHabit = h === 'all' ? null : state.habits.find(x => x.id === h) || null;
+      renderStats();
     }
   });
 

@@ -396,36 +396,91 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 /* ============================================================
    STATS
 ============================================================ */
-.stats-overview { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 16px; }
+/* Habit filter pills */
+.stats-filter {
+  display: flex; gap: 7px; overflow-x: auto; margin-bottom: 16px;
+  padding-bottom: 4px; -webkit-overflow-scrolling: touch; scrollbar-width: none;
+}
+.stats-filter::-webkit-scrollbar { display: none; }
+.stats-pill {
+  display: inline-flex; align-items: center; gap: 6px; white-space: nowrap;
+  flex-shrink: 0; padding: 7px 13px; border-radius: 99px;
+  font-size: 13px; font-weight: 550; color: var(--fg-2);
+  background: var(--bg-card); border: 1.5px solid var(--border);
+  transition: background 0.12s, border-color 0.12s, color 0.12s;
+}
+.stats-pill:hover { border-color: var(--border-hi); }
+.stats-pill.active { background: var(--fg); border-color: var(--fg); color: var(--bg-card); }
+.stats-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+
+/* KPI tiles */
+.stats-overview { display: grid; grid-template-columns: repeat(4, 1fr); gap: 8px; margin-bottom: 14px; }
+@media (max-width: 460px) { .stats-overview { grid-template-columns: 1fr 1fr; gap: 10px; } }
 .stat-tile {
   background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: var(--radius-lg); padding: 16px;
+  border-radius: var(--radius); padding: 14px 14px 13px;
   box-shadow: var(--shadow-sm);
 }
-.stat-tile .num { font-size: 30px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; color: var(--fg); }
-.stat-tile .lbl { font-size: 12px; color: var(--fg-dim); margin-top: 6px; }
+.stat-tile .num { font-size: 26px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; color: var(--fg); }
+.stat-tile .num .stat-sub { font-size: 14px; font-weight: 500; color: var(--fg-dim); letter-spacing: 0; }
+.stat-tile .lbl { font-size: 11.5px; color: var(--fg-dim); margin-top: 7px; }
 
-.stats-habit-card {
+/* Chart cards */
+.stats-card {
   background: var(--bg-card); border: 1px solid var(--border);
-  border-left: 3px solid currentColor; border-radius: var(--radius-lg);
-  padding: 16px; margin-bottom: 10px;
+  border-radius: var(--radius-lg); padding: 16px 16px 12px; margin-bottom: 12px;
   box-shadow: var(--shadow-sm);
 }
-.stats-habit-head { display: flex; align-items: center; gap: 8px; margin-bottom: 14px; }
-.stats-habit-head h3 { margin: 0; font-size: 15px; font-weight: 600; flex: 1; color: var(--fg); }
-.stats-metrics { display: grid; grid-template-columns: repeat(4,1fr); gap: 6px; text-align: center; margin-bottom: 12px; }
-.stats-metric .v { font-size: 18px; font-weight: 700; letter-spacing: -0.03em; line-height: 1; color: var(--fg); }
-.stats-metric .k { font-size: 10px; color: var(--fg-dim); margin-top: 4px; line-height: 1.3; }
-@media (min-width: 480px) {
-  .stats-metric .v { font-size: 20px; }
-  .stats-metric .k { font-size: 11px; }
-}
+.stats-card-head { display: flex; align-items: baseline; justify-content: space-between; gap: 10px; }
+.stats-card-title { font-size: 15px; font-weight: 650; letter-spacing: -0.014em; color: var(--fg); }
+.stats-card-sub { font-size: 12px; color: var(--fg-dim); margin-top: 3px; }
+.stats-card-sub strong { color: var(--fg-2); font-weight: 650; }
+.viz-delta { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.viz-delta.up   { color: #1a7a32; }
+.viz-delta.down { color: #c0392b; }
+.viz-delta.flat { color: var(--fg-dim); }
 
-.rate-bar-wrap { display: flex; align-items: center; gap: 10px; margin-bottom: 8px; }
-.rate-bar-wrap .rate-lbl { font-size: 12px; color: var(--fg-dim); min-width: 50px; }
-.rate-bar { flex: 1; height: 6px; border-radius: 99px; background: var(--border); overflow: hidden; }
-.rate-fill { height: 100%; border-radius: 99px; background: currentColor; transition: width 0.4s cubic-bezier(.22,1,.36,1); }
-.rate-bar-wrap .rate-pct { font-size: 12px; font-weight: 600; min-width: 36px; text-align: right; color: var(--fg-2); }
+/* SVG charts */
+.viz-wrap { position: relative; margin-top: 12px; }
+.viz-area, .viz-bars { display: block; width: 100%; height: auto; overflow: visible; touch-action: pan-y; }
+.viz-grid { stroke: var(--border); stroke-width: 1; }
+.viz-axis { fill: var(--fg-dim); font-size: 9px; font-family: var(--font); }
+.viz-fill { fill: var(--c); opacity: 0.12; }
+.viz-line { fill: none; stroke: var(--c); stroke-width: 2; stroke-linejoin: round; stroke-linecap: round; }
+.viz-dot  { fill: var(--c); stroke: var(--bg-card); stroke-width: 2; }
+.viz-cross { stroke: var(--fg-dim); stroke-width: 1; stroke-dasharray: 3 3; opacity: 0.6; }
+.viz-cursor { fill: var(--c); stroke: var(--bg-card); stroke-width: 2; }
+.viz-xaxis { display: flex; justify-content: space-between; font-size: 10px; color: var(--fg-dim); margin-top: 2px; font-variant-numeric: tabular-nums; }
+.viz-empty { font-size: 13px; color: var(--fg-dim); margin: 18px 0; text-align: center; }
+
+.viz-bar-hit { fill: transparent; }
+.viz-bar-rect { fill: var(--c); opacity: 0.35; transition: opacity 0.12s; }
+.viz-bar-rect.best { opacity: 0.9; }
+.viz-bar.on .viz-bar-rect { opacity: 1; }
+.viz-bar-cap { fill: var(--fg-2); font-size: 10px; font-weight: 650; font-family: var(--font); }
+
+/* Floating tooltip */
+.viz-tip {
+  position: absolute; top: -6px; transform: translateY(-100%);
+  background: var(--fg); color: var(--bg-card);
+  font-size: 11.5px; font-weight: 500; padding: 5px 9px; border-radius: 7px;
+  white-space: nowrap; pointer-events: none; z-index: 3;
+  box-shadow: var(--shadow-sm);
+}
+.viz-tip strong { font-weight: 700; }
+
+/* Ranked by-habit list */
+.stats-rank-list { display: flex; flex-direction: column; gap: 4px; margin-top: 12px; }
+.stats-rank {
+  display: flex; align-items: center; gap: 10px; width: 100%;
+  padding: 8px 6px; border-radius: var(--radius-sm); text-align: left;
+  transition: background 0.12s;
+}
+.stats-rank:hover { background: var(--bg-inset); }
+.stats-rank-name { font-size: 13.5px; font-weight: 500; color: var(--fg); min-width: 76px; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.stats-rank-track { flex: 1; height: 7px; border-radius: 99px; background: var(--bg-inset); overflow: hidden; }
+.stats-rank-fill { display: block; height: 100%; border-radius: 99px; transition: width 0.5s cubic-bezier(.22,1,.36,1); }
+.stats-rank-pct { font-size: 12.5px; font-weight: 650; color: var(--fg-2); min-width: 34px; text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ============================================================
    MODAL
