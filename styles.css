@@ -573,6 +573,7 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 }
 .weather-temp-big sup { font-size: 16px; font-weight: 400; color: var(--fg-dim); vertical-align: super; }
 .weather-desc     { font-size: 14px; color: var(--fg-2); margin-top: 2px; }
+.weather-feels    { font-size: 12.5px; color: var(--fg-dim); margin-top: 2px; }
 .weather-location {
   display: inline-flex; align-items: center; gap: 5px;
   margin-top: 6px; padding: 0; font-size: 12.5px;
@@ -703,6 +704,41 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
   color: var(--fg-dim); font-size: 14px; padding: 6px 0;
 }
 .morning-error { font-size: 13px; color: var(--danger); margin: 0; }
+
+/* Freshness / refresh row */
+.morning-refresh {
+  grid-column: 1 / -1;
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  margin: -4px 2px -2px;
+}
+.morning-updated { font-size: 12px; color: var(--fg-dim); font-variant-numeric: tabular-nums; }
+.morning-refresh-btn {
+  width: 28px; height: 28px; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--fg-dim); transition: color 0.15s, background 0.15s;
+}
+.morning-refresh-btn:hover { color: var(--fg-2); background: var(--bg-inset); }
+.morning-refresh-btn svg { width: 15px; height: 15px; }
+.morning-refresh-btn.spinning { color: var(--fg-dim); }
+.morning-refresh-btn.spinning svg { animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* Skeleton loaders */
+.skel-line, .skel-block {
+  background: linear-gradient(90deg, var(--bg-inset) 25%, var(--border) 37%, var(--bg-inset) 63%);
+  background-size: 400% 100%;
+  animation: skel-shimmer 1.4s ease infinite;
+  border-radius: 6px;
+}
+@keyframes skel-shimmer { 0% { background-position: 100% 0; } 100% { background-position: 0 0; } }
+.skel-list { display: flex; flex-direction: column; gap: 11px; padding: 4px 0; }
+.skel-list .skel-line { height: 13px; }
+.skel-wmain { display: flex; align-items: center; gap: 14px; margin-bottom: 14px; }
+.skel-icon { width: 46px; height: 46px; border-radius: 12px; flex-shrink: 0; }
+.skel-wtext { flex: 1; display: flex; flex-direction: column; gap: 9px; }
+.skel-wtext .skel-line { height: 14px; }
+.skel-wgrid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.skel-wgrid .skel-block { height: 50px; border-radius: var(--radius-sm); }
 
 /* ============================================================
    TODO TAB

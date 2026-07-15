@@ -997,6 +997,40 @@
     return `<div class="year-week-grid">${cells}</div>`;
   }
 
+  function greeting(hour) {
+    const h = hour !== undefined ? hour : new Date().getHours();
+    if (h >= 5 && h < 12)  return 'Good morning';
+    if (h >= 12 && h < 18) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  function formatAgo(ts) {
+    const mins = Math.floor((Date.now() - ts) / 60000);
+    if (mins < 1)  return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24)  return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  // Shimmer placeholders shown while a card's data loads
+  const skelLines = widths =>
+    `<div class="skel-list">${widths.map(w => `<div class="skel-line" style="width:${w}"></div>`).join('')}</div>`;
+  const skelWeather = () => `
+    <div class="skel-weather">
+      <div class="skel-wmain">
+        <div class="skel-block skel-icon"></div>
+        <div class="skel-wtext">
+          <div class="skel-line" style="width:52%;height:30px"></div>
+          <div class="skel-line" style="width:64%"></div>
+        </div>
+      </div>
+      <div class="skel-wgrid">
+        <div class="skel-block"></div><div class="skel-block"></div>
+        <div class="skel-block"></div><div class="skel-block"></div>
+      </div>
+    </div>`;
+
   function renderMorning() {
     const root = document.getElementById('view-morning');
 
@@ -1023,7 +1057,7 @@
     if (morningState.weatherErr) {
       weatherBody = `<p class="morning-error">${esc(morningState.weatherErr)}</p>`;
     } else if (!morningState.weather) {
-      weatherBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading weather…</div>`;
+      weatherBody = skelWeather();
     } else {
       const w     = morningState.weather;
       const cur   = w.current_condition[0];
@@ -1041,6 +1075,7 @@
           <div>
             <div class="weather-temp-big">${cur.temp_C}<sup>°C</sup></div>
             <div class="weather-desc">${esc(wx.desc)}</div>
+            ${cur.FeelsLikeC ? `<div class="weather-feels">Feels like ${cur.FeelsLikeC}°</div>` : ''}
             <button class="weather-location" data-action="change-city" aria-label="Change city">
               <svg class="weather-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="2.5"/>
@@ -1068,7 +1103,7 @@
     } else if (morningState.calErr) {
       calBody = `<p class="morning-error">${esc(morningState.calErr)}</p>`;
     } else if (!morningState.calendar.today.length && !morningState.calendar.tomorrow.length && !morningState.calErr) {
-      calBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading calendar…</div>`;
+      calBody = skelLines(['45%','80%','62%','45%','70%']);
     } else {
       function renderDayEvents(evs, label) {
         const items = evs.map(ev => {
@@ -1096,7 +1131,7 @@
     if (morningState.newsErr) {
       newsBody = `<p class="morning-error">${esc(morningState.newsErr)}</p>`;
     } else if (!morningState.news) {
-      newsBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading news…</div>`;
+      newsBody = skelLines(['88%','72%','80%','66%','78%']);
     } else {
       newsBody = morningState.news.map(item => `
         <div class="news-item">
@@ -1111,7 +1146,7 @@
     if (morningState.eventsErr) {
       eventsBody = `<p class="morning-error">${esc(morningState.eventsErr)}</p>`;
     } else if (!morningState.events) {
-      eventsBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading events…</div>`;
+      eventsBody = skelLines(['82%','70%','86%','64%']);
     } else {
       eventsBody = morningState.events.map(item => `
         <div class="news-item">
@@ -1129,7 +1164,7 @@
     } else if (morningState.transitErr) {
       transitBody = `<p class="morning-error">${esc(morningState.transitErr)}</p>`;
     } else if (morningState.transit === null) {
-      transitBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading departures…</div>`;
+      transitBody = skelLines(['60%','55%','50%']);
     } else if (!morningState.transit.length) {
       transitBody = `<p class="morning-muted">No upcoming U7 → Spandau departures.</p>`;
     } else {
@@ -1157,7 +1192,7 @@
     } else if (morningState.recordErr) {
       recordBody = `<p class="morning-error">${esc(morningState.recordErr)}</p>`;
     } else if (morningState.record === null) {
-      recordBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading record…</div>`;
+      recordBody = skelLines(['70%','85%','50%']);
     } else if (!morningState.record) {
       recordBody = `<p class="morning-muted">Collection is empty.</p>`;
     } else {
@@ -1181,9 +1216,22 @@
         ${r.notes ? `<p class="record-notes">${esc(r.notes)}</p>` : ''}`;
     }
 
+    // ---- Freshness / refresh ----
+    const refreshing = !morningState.lastFetched;
+    const refreshRow = `
+      <div class="morning-refresh">
+        <span class="morning-updated">${refreshing ? 'Updating…' : `Updated ${formatAgo(morningState.lastFetched)}`}</span>
+        <button class="morning-refresh-btn${refreshing ? ' spinning' : ''}" data-action="refresh-morning" aria-label="Refresh" ${refreshing ? 'disabled' : ''}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+          </svg>
+        </button>
+      </div>`;
+
     root.innerHTML = `
       <div class="morning-grid">
         ${yearCard}
+        ${refreshRow}
         <div class="morning-card">
           <div class="morning-card-title">Weather</div>
           ${weatherBody}
@@ -1259,7 +1307,10 @@
     if (!el) return;
     const { action, id, date } = el.dataset;
 
-    if (action === 'change-city') {
+    if (action === 'refresh-morning') {
+      morningState.lastFetched = null;
+      initMorningView();
+    } else if (action === 'change-city') {
       const current = localStorage.getItem(WEATHER_CITY_KEY) || 'Paris';
       const city = prompt('Change weather city:', current);
       if (city && city.trim()) {
@@ -1300,7 +1351,8 @@
       document.getElementById(`view-${v}`).classList.add('active');
 
       const titles = { morning:'Morning', today:'Today', todo:'Todo', history:'History', stats:'Stats' };
-      document.getElementById('page-title').textContent = titles[v] || v;
+      document.getElementById('page-title').textContent =
+        v === 'morning' ? greeting() : (titles[v] || v);
 
       // Show/hide FAB
       document.getElementById('fab').style.display = v === 'today' ? '' : 'none';
