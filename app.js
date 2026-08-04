@@ -233,7 +233,7 @@
       cells.push(
         `<div class="cal-cell ${on?'on':''} ${isFut?'future':''} ${ds===todayS?'today':''}"
               data-action="toggle-day" data-id="${habitId}" data-date="${ds}"
-              title="${ds}"></div>`);
+              title="${ds}"><span class="cal-dn">${date.getDate()}</span></div>`);
     }
     const rows = [`<div class="cal-row">${cells.join('')}</div>`];
 
@@ -518,90 +518,271 @@
   // ============================================================
   // Render: Stats
   // ============================================================
+  // ---- Stats: scope + aggregate helpers ----
+  let statsHabit = null; // null = all habits; otherwise a habit object
+  const ACCENT = '#34c759';
+  const WD_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+  const createdStr = h => (h.created_at ? fmtDate(new Date(h.created_at)) : '0000-01-01');
+
+  // Share of the scope completed on a given day (0..1), or null if nothing was
+  // active yet. For one habit that's 0/1; for "all" it's done/active habits.
+  function dayFraction(dstr, scope) {
+    if (scope) {
+      if (dstr < createdStr(scope)) return null;
+      return hasTick(scope.id, dstr) ? 1 : 0;
+    }
+    const active = state.habits.filter(h => dstr >= createdStr(h));
+    if (!active.length) return null;
+    return active.filter(h => hasTick(h.id, dstr)).length / active.length;
+  }
+
+  // 7-day trailing completion rate for each of the last `days` days (%)
+  function trendSeries(scope, days) {
+    const base = new Date(), out = [];
+    for (let i = days - 1; i >= 0; i--) {
+      const d = shiftDays(base, -i);
+      let sum = 0, cnt = 0;
+      for (let j = 0; j < 7; j++) {
+        const f = dayFraction(fmtDate(shiftDays(d, -j)), scope);
+        if (f !== null) { sum += f; cnt++; }
+      }
+      out.push({ d: `${d.getMonth() + 1}/${d.getDate()}`, v: cnt ? Math.round((sum / cnt) * 100) : null });
+    }
+    // Drop the leading stretch before any data existed
+    const first = out.findIndex(p => p.v !== null);
+    return first < 0 ? [] : out.slice(first).map(p => ({ ...p, v: p.v ?? 0 }));
+  }
+
+  function weekdayRhythm(scope, days) {
+    const sums = new Array(7).fill(0), cnts = new Array(7).fill(0), base = new Date();
+    for (let i = 0; i < days; i++) {
+      const d = shiftDays(base, -i);
+      const f = dayFraction(fmtDate(d), scope);
+      if (f === null) continue;
+      const wd = d.getDay();
+      sums[wd] += f; cnts[wd]++;
+    }
+    return [1, 2, 3, 4, 5, 6, 0].map(wd => ({
+      full: WD_FULL[wd], letter: WD_FULL[wd][0],
+      v: cnts[wd] ? Math.round((sums[wd] / cnts[wd]) * 100) : 0, has: cnts[wd] > 0,
+    }));
+  }
+
+  // Mean daily completion rate over a window [startAgo, startAgo+len) days back
+  function scopeRate(scope, startAgo, len) {
+    let sum = 0, cnt = 0, base = new Date();
+    for (let i = startAgo; i < startAgo + len; i++) {
+      const f = dayFraction(fmtDate(shiftDays(base, -i)), scope);
+      if (f !== null) { sum += f; cnt++; }
+    }
+    return cnt ? (sum / cnt) * 100 : null;
+  }
+
+  function areaFigure(pts, color) {
+    if (pts.length < 2) return `<p class="viz-empty">Not enough history yet — keep ticking.</p>`;
+    const n = pts.length, W = 340, H = 132, padL = 6, padR = 12, padT = 12, padB = 18;
+    const pw = W - padL - padR, ph = H - padT - padB, base = padT + ph;
+    const X = i => padL + (i / (n - 1)) * pw;
+    const Y = v => padT + (1 - v / 100) * ph;
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
+    const area = `M${X(0).toFixed(1)},${base} ${pts.map((p, i) => `L${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ')} L${X(n - 1).toFixed(1)},${base} Z`;
+    const grid = [0, 50, 100].map(g =>
+      `<line class="viz-grid" x1="${padL}" x2="${W - padR}" y1="${Y(g)}" y2="${Y(g)}"/>` +
+      `<text class="viz-axis" x="${W - padR + 1}" y="${Y(g) + 3}">${g}</text>`).join('');
+    const last = pts[n - 1];
+    const geo = { padL, pw, padT, ph, n, W };
+    return `
+      <div class="viz-wrap">
+        <svg class="viz-area" viewBox="0 0 ${W} ${H}" style="--c:${color}"
+             data-pts='${JSON.stringify(pts)}' data-geo='${JSON.stringify(geo)}'>
+          ${grid}
+          <path class="viz-fill" d="${area}"/>
+          <path class="viz-line" d="${line}"/>
+          <line class="viz-cross" x1="0" x2="0" y1="${padT}" y2="${base}" style="display:none"/>
+          <circle class="viz-dot" cx="${X(n - 1).toFixed(1)}" cy="${Y(last.v).toFixed(1)}" r="3.4"/>
+          <circle class="viz-cursor" r="3.4" style="display:none"/>
+        </svg>
+        <div class="viz-tip" style="display:none"></div>
+        <div class="viz-xaxis"><span>${esc(pts[0].d)}</span><span>${esc(last.d)}</span></div>
+      </div>`;
+  }
+
+  function barsFigure(rhythm, color) {
+    const W = 340, H = 118, padL = 4, padR = 4, padT = 16, padB = 18;
+    const pw = W - padL - padR, ph = H - padT - padB, base = padT + ph;
+    const band = pw / 7, barW = Math.min(26, band - 10);
+    const maxV = Math.max(...rhythm.map(r => r.v), 1);
+    const bestI = rhythm.reduce((b, r, i) => (r.v > rhythm[b].v ? i : b), 0);
+    const bars = rhythm.map((r, i) => {
+      const cx = padL + band * i + band / 2;
+      const h = r.has ? (r.v / 100) * ph : 0;
+      const y = base - h;
+      const isBest = i === bestI && r.v > 0;
+      return `
+        <g class="viz-bar" data-full="${esc(r.full)}" data-v="${r.v}">
+          <rect class="viz-bar-hit" x="${cx - band / 2}" y="${padT}" width="${band}" height="${ph}"/>
+          <rect class="viz-bar-rect${isBest ? ' best' : ''}" x="${(cx - barW / 2).toFixed(1)}" y="${y.toFixed(1)}"
+                width="${barW.toFixed(1)}" height="${Math.max(h, r.has ? 2 : 0).toFixed(1)}" rx="3"/>
+          ${isBest ? `<text class="viz-bar-cap" x="${cx.toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle">${r.v}%</text>` : ''}
+          <text class="viz-axis" x="${cx.toFixed(1)}" y="${base + 12}" text-anchor="middle">${r.letter}</text>
+        </g>`;
+    }).join('');
+    return `
+      <div class="viz-wrap">
+        <svg class="viz-bars" viewBox="0 0 ${W} ${H}" style="--c:${color}">
+          <line class="viz-grid" x1="${padL}" x2="${W - padR}" y1="${base}" y2="${base}"/>
+          ${bars}
+        </svg>
+        <div class="viz-tip" style="display:none"></div>
+      </div>`;
+  }
+
   function renderStats() {
     const root = document.getElementById('view-stats');
     if (state.loading) return;
 
     if (!state.habits.length) {
-      root.innerHTML = `<div class="empty"><div class="empty-icon">📊</div><h2>No habits yet</h2></div>`;
+      statsHabit = null;
+      root.innerHTML = `<div class="empty"><h2>No habits yet</h2><p>Add a habit to start tracking your stats.</p></div>`;
       return;
     }
+    // Keep scope valid if the selected habit was removed
+    if (statsHabit && !state.habits.some(h => h.id === statsHabit.id)) statsHabit = null;
+    const scope = statsHabit;
+    const color = scope ? scope.color : ACCENT;
 
-    const today    = todayStr();
-    const doneToday = state.habits.filter(h => hasTick(h.id, today)).length;
-    const total    = state.habits.length;
-    const pctToday = total ? Math.round((doneToday / total) * 100) : 0;
-    const totalEver = state.entries.size;
-    const bestStreak = Math.max(0, ...state.habits.map(h => longestStreak(h.id)));
-
-    const overview = `
-      <div class="stats-overview">
-        <div class="stat-tile">
-          <div class="num">${doneToday}<span style="font-size:16px;font-weight:400;color:var(--fg-dim)">/${total}</span></div>
-          <div class="lbl">Done today</div>
-        </div>
-        <div class="stat-tile">
-          <div class="num" style="color:var(--accent)">${pctToday}%</div>
-          <div class="lbl">Today's rate</div>
-        </div>
-        <div class="stat-tile">
-          <div class="num">${totalEver}</div>
-          <div class="lbl">Total ticks</div>
-        </div>
-        <div class="stat-tile">
-          <div class="num">🔥${bestStreak}</div>
-          <div class="lbl">Best streak (any)</div>
-        </div>
+    // ---- Filter pills ----
+    const pill = (label, active, dataAttr, dot) =>
+      `<button class="stats-pill${active ? ' active' : ''}" ${dataAttr}>${dot ? `<span class="stats-dot" style="background:${dot}"></span>` : ''}${esc(label)}</button>`;
+    const pills = `
+      <div class="stats-filter">
+        ${pill('All habits', !scope, 'data-action="stats-filter" data-habit="all"')}
+        ${state.habits.map(h => pill(h.name, scope && scope.id === h.id, `data-action="stats-filter" data-habit="${h.id}"`, h.color)).join('')}
       </div>`;
 
-    function buildStatsCard(h) {
-      const cur  = currentStreak(h.id);
-      const lng  = longestStreak(h.id);
-      const r7   = completionRate(h.id, 7);
-      const r30  = completionRate(h.id, 30);
-      return `
-        <div class="stats-habit-card" style="color:${h.color}">
-          <div class="stats-habit-head">
-            <h3>${esc(h.name)}</h3>
-            ${cur > 0 ? `<span style="font-size:13px;color:var(--fg-dim)">🔥 ${cur}d</span>` : ''}
-          </div>
-          <div class="stats-metrics">
-            <div class="stats-metric"><div class="v">${cur}</div><div class="k">Current<br>streak</div></div>
-            <div class="stats-metric"><div class="v">${lng}</div><div class="k">Longest<br>streak</div></div>
-            <div class="stats-metric"><div class="v">${r7}%</div><div class="k">Last<br>7 days</div></div>
-            <div class="stats-metric"><div class="v">${r30}%</div><div class="k">Last<br>30 days</div></div>
-          </div>
-          <div style="display:flex;flex-direction:column;gap:8px">
-            <div class="rate-bar-wrap">
-              <span class="rate-lbl">7 days</span>
-              <div class="rate-bar"><div class="rate-fill" style="width:${r7}%"></div></div>
-              <span class="rate-pct">${r7}%</span>
-            </div>
-            <div class="rate-bar-wrap">
-              <span class="rate-lbl">30 days</span>
-              <div class="rate-bar"><div class="rate-fill" style="width:${r30}%"></div></div>
-              <span class="rate-pct">${r30}%</span>
-            </div>
-          </div>
+    // ---- KPI tiles ----
+    const today = todayStr();
+    let tiles;
+    if (!scope) {
+      const doneToday = state.habits.filter(h => hasTick(h.id, today)).length;
+      const total = state.habits.length;
+      const r30 = scopeRate(null, 0, 30) ?? 0;
+      const best = Math.max(0, ...state.habits.map(h => longestStreak(h.id)));
+      tiles = [
+        [`${doneToday}<span class="stat-sub">/${total}</span>`, 'Done today'],
+        [`${Math.round(r30)}<span class="stat-sub">%</span>`, '30-day rate'],
+        [`${best}<span class="stat-sub">d</span>`, 'Best streak'],
+        [`${state.entries.size}`, 'Total ticks'],
+      ];
+    } else {
+      tiles = [
+        [`${currentStreak(scope.id)}<span class="stat-sub">d</span>`, 'Current streak'],
+        [`${longestStreak(scope.id)}<span class="stat-sub">d</span>`, 'Longest streak'],
+        [`${completionRate(scope.id, 30)}<span class="stat-sub">%</span>`, '30-day rate'],
+        [`${tickDates(scope.id).length}`, 'Total ticks'],
+      ];
+    }
+    const overview = `<div class="stats-overview">${tiles.map(([v, l]) =>
+      `<div class="stat-tile"><div class="num">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
+
+    // ---- Consistency trend (with momentum vs prior 4 weeks) ----
+    const trend = trendSeries(scope, 56);
+    const recent = scopeRate(scope, 0, 28), prior = scopeRate(scope, 28, 28);
+    let momentum = '';
+    if (recent !== null && prior !== null) {
+      const delta = Math.round(recent - prior);
+      const dir = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
+      const arrow = delta > 0 ? '▲' : delta < 0 ? '▼' : '→';
+      momentum = `<span class="viz-delta ${dir}">${arrow} ${Math.abs(delta)}% vs prev 4 wks</span>`;
+    }
+    const trendCard = `
+      <div class="stats-card">
+        <div class="stats-card-head"><span class="stats-card-title">Consistency</span>${momentum}</div>
+        <div class="stats-card-sub">7-day completion rate · last 8 weeks</div>
+        ${areaFigure(trend, color)}
+      </div>`;
+
+    // ---- Weekly rhythm ----
+    const rhythm = weekdayRhythm(scope, 84);
+    const anyData = rhythm.some(r => r.has);
+    const best = rhythm.reduce((b, r) => (r.v > b.v ? r : b), rhythm[0]);
+    const rhythmCard = `
+      <div class="stats-card">
+        <div class="stats-card-head"><span class="stats-card-title">Weekly rhythm</span></div>
+        <div class="stats-card-sub">${anyData ? `Most consistent on <strong>${esc(best.full)}</strong>` : 'Completion rate by weekday'}</div>
+        ${barsFigure(rhythm, color)}
+      </div>`;
+
+    // ---- By-habit breakdown (all scope only) ----
+    let breakdown = '';
+    if (!scope && state.habits.length > 1) {
+      const rows = state.habits
+        .map(h => ({ h, r: completionRate(h.id, 30) }))
+        .sort((a, b) => b.r - a.r)
+        .map(({ h, r }) => `
+          <button class="stats-rank" data-action="stats-filter" data-habit="${h.id}">
+            <span class="stats-dot" style="background:${h.color}"></span>
+            <span class="stats-rank-name">${esc(h.name)}</span>
+            <span class="stats-rank-track"><span class="stats-rank-fill" style="width:${r}%;background:${h.color}"></span></span>
+            <span class="stats-rank-pct">${r}%</span>
+          </button>`).join('');
+      breakdown = `
+        <div class="stats-card">
+          <div class="stats-card-head"><span class="stats-card-title">By habit</span></div>
+          <div class="stats-card-sub">30-day completion · tap to focus</div>
+          <div class="stats-rank-list">${rows}</div>
         </div>`;
     }
 
-    const groups = groupBySection(state.habits);
-    let cardsHtml = '';
-    for (const [section, habits] of groups) {
-      const cards = habits.map(buildStatsCard).join('');
-      if (groups.size === 1 && !section) {
-        cardsHtml += cards;
-      } else {
-        cardsHtml += `
-          <div class="section-group">
-            <div class="section-header">${esc(section || 'General')}</div>
-            ${cards}
-          </div>`;
-      }
-    }
+    root.innerHTML = pills + overview + trendCard + rhythmCard + breakdown;
+    wireStatsCharts(root);
+  }
 
-    root.innerHTML = overview + cardsHtml;
+  // Pointer-driven crosshair/tooltip for the stats charts
+  function wireStatsCharts(root) {
+    root.querySelectorAll('.viz-area').forEach(svg => {
+      const pts = JSON.parse(svg.dataset.pts), geo = JSON.parse(svg.dataset.geo);
+      const wrap = svg.closest('.viz-wrap'), tip = wrap.querySelector('.viz-tip');
+      const cross = svg.querySelector('.viz-cross'), cursor = svg.querySelector('.viz-cursor');
+      const X = i => geo.padL + (i / (geo.n - 1)) * geo.pw;
+      const Y = v => geo.padT + (1 - v / 100) * geo.ph;
+      const move = e => {
+        const rect = svg.getBoundingClientRect();
+        const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+        let i = Math.round((cx / rect.width) * (geo.n - 1));
+        i = Math.max(0, Math.min(geo.n - 1, i));
+        const p = pts[i], x = X(i), y = Y(p.v);
+        cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.style.display = '';
+        cursor.setAttribute('cx', x); cursor.setAttribute('cy', y); cursor.style.display = '';
+        tip.innerHTML = `<strong>${p.v}%</strong> · ${esc(p.d)}`;
+        tip.style.display = '';
+        tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth, (x / geo.W) * rect.width - tip.offsetWidth / 2)) + 'px';
+      };
+      const hide = () => { cross.style.display = 'none'; cursor.style.display = 'none'; tip.style.display = 'none'; };
+      svg.addEventListener('pointermove', move);
+      svg.addEventListener('pointerdown', move);
+      svg.addEventListener('pointerleave', hide);
+    });
+    root.querySelectorAll('.viz-bars').forEach(svg => {
+      const wrap = svg.closest('.viz-wrap'), tip = wrap.querySelector('.viz-tip');
+      svg.querySelectorAll('.viz-bar').forEach(g => {
+        const show = e => {
+          const rect = svg.getBoundingClientRect();
+          const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
+          tip.innerHTML = `<strong>${g.dataset.v}%</strong> · ${esc(g.dataset.full)}`;
+          tip.style.display = '';
+          tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth, cx - tip.offsetWidth / 2)) + 'px';
+          svg.querySelectorAll('.viz-bar').forEach(b => b.classList.toggle('on', b === g));
+        };
+        g.addEventListener('pointerenter', show);
+        g.addEventListener('pointerdown', show);
+      });
+      svg.addEventListener('pointerleave', () => {
+        tip.style.display = 'none';
+        svg.querySelectorAll('.viz-bar').forEach(b => b.classList.remove('on'));
+      });
+    });
   }
 
   // ============================================================
@@ -810,24 +991,36 @@
 
   loadMorningCache();
 
-  function wmoInfo(code, hour) {
+  // wttr.in reports World Weather Online (WWO) codes (113–395), NOT WMO codes.
+  // Map each to an icon; the human-readable label comes from wttr's own
+  // weatherDesc, so a clear day never renders as a thunderstorm.
+  const WWO_ICONS = {
+    113: '☀️', 116: '🌤️', 119: '☁️', 122: '☁️', 143: '🌫️',
+    176: '🌦️', 179: '🌨️', 182: '🌨️', 185: '🌧️', 200: '⛈️',
+    227: '🌨️', 230: '❄️', 248: '🌫️', 260: '🌫️',
+    263: '🌦️', 266: '🌧️', 281: '🌧️', 284: '🌧️',
+    293: '🌦️', 296: '🌧️', 299: '🌧️', 302: '🌧️', 305: '🌧️', 308: '🌧️',
+    311: '🌧️', 314: '🌧️', 317: '🌨️', 320: '🌨️',
+    323: '🌨️', 326: '🌨️', 329: '❄️', 332: '❄️', 335: '❄️', 338: '❄️',
+    350: '🧊', 353: '🌦️', 356: '🌧️', 359: '🌧️',
+    362: '🌨️', 365: '🌨️', 368: '🌨️', 371: '❄️',
+    374: '🧊', 377: '🧊', 386: '⛈️', 389: '⛈️', 392: '⛈️', 395: '⛈️',
+  };
+
+  function weatherInfo(code, desc, hour) {
     const h = hour !== undefined ? hour : new Date().getHours();
-    const night   = h < 6 || h >= 21;
-    const morning = h >= 6 && h < 12;
-    if (code === 0)  return { icon: night ? '🌙' : morning ? '🌄' : '☀️', desc: 'Clear' };
-    if (code <= 2)   return { icon: night ? '🌛' : '🌤️', desc: 'Partly cloudy' };
-    if (code === 3)  return { icon: '☁️',  desc: 'Overcast' };
-    if (code <= 49)  return { icon: '🌫️', desc: 'Foggy' };
-    if (code <= 59)  return { icon: '🌦️', desc: 'Drizzle' };
-    if (code <= 69)  return { icon: '🌧️', desc: 'Rain' };
-    if (code <= 79)  return { icon: '❄️',  desc: 'Snow' };
-    if (code <= 84)  return { icon: '🌦️', desc: 'Rain showers' };
-    return { icon: '⛈️', desc: 'Thunderstorm' };
+    const night = h < 6 || h >= 21;
+    let icon = WWO_ICONS[code] || '☁️';
+    if (night && code === 113) icon = '🌙';
+    else if (night && code === 116) icon = '🌛';
+    return { icon, desc: desc || 'Clear' };
   }
 
+  const WEATHER_CITY_KEY = 'habits.weatherCity';
+
   async function fetchWeather() {
-    // wttr.in: single request, IP-based location, no permission needed
-    const resp = await fetch('https://wttr.in/?format=j1');
+    const city = localStorage.getItem(WEATHER_CITY_KEY) || 'Paris';
+    const resp = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`);
     if (!resp.ok) throw new Error(`Weather ${resp.status}`);
     morningState.weather = await resp.json();
   }
@@ -909,7 +1102,7 @@
 
   async function fetchNews() {
     try {
-      morningState.news = await fetchRSSFeed('https://feeds.bbci.co.uk/news/world/rss.xml', 5);
+      morningState.news = await fetchRSSFeed('https://www.lemonde.fr/rss/une.xml', 5);
     } catch (err) {
       morningState.newsErr = err.message;
     }
@@ -928,13 +1121,18 @@
     const dow = now.getDay(); // 0=Sun, 6=Sat
     if (dow === 0 || dow === 6) { morningState.transit = []; return; }
     const STOP_ID = '900079201'; // Rathaus Neukölln U-Bahn
+    // Request U-Bahn only. In this API every product flag defaults to true, so
+    // `subway=true` alone does NOT exclude buses/trams — at a busy hub those
+    // fill the `results` budget and crowd out the U7 departures we want.
+    const products = 'subway=true&suburban=false&tram=false&bus=false&ferry=false&express=false&regional=false';
     const resp = await fetch(
-      `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?results=20&duration=60&subway=true`
+      `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?duration=90&results=30&${products}`
     );
     if (!resp.ok) throw new Error(`BVG ${resp.status}`);
     const data = await resp.json();
     morningState.transit = (data.departures || [])
-      .filter(d => d.line?.name === 'U7' && d.direction?.toLowerCase().includes('spandau'))
+      .filter(d => d.line?.name?.replace(/\s+/g, '') === 'U7'
+                && d.direction?.toLowerCase().includes('spandau'))
       .slice(0, 3);
   }
 
@@ -1009,6 +1207,40 @@
     return `<div class="year-week-grid">${cells}</div>`;
   }
 
+  function greeting(hour) {
+    const h = hour !== undefined ? hour : new Date().getHours();
+    if (h >= 5 && h < 12)  return 'Good morning';
+    if (h >= 12 && h < 18) return 'Good afternoon';
+    return 'Good evening';
+  }
+
+  function formatAgo(ts) {
+    const mins = Math.floor((Date.now() - ts) / 60000);
+    if (mins < 1)  return 'just now';
+    if (mins < 60) return `${mins}m ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24)  return `${hrs}h ago`;
+    return `${Math.floor(hrs / 24)}d ago`;
+  }
+
+  // Shimmer placeholders shown while a card's data loads
+  const skelLines = widths =>
+    `<div class="skel-list">${widths.map(w => `<div class="skel-line" style="width:${w}"></div>`).join('')}</div>`;
+  const skelWeather = () => `
+    <div class="skel-weather">
+      <div class="skel-wmain">
+        <div class="skel-block skel-icon"></div>
+        <div class="skel-wtext">
+          <div class="skel-line" style="width:52%;height:30px"></div>
+          <div class="skel-line" style="width:64%"></div>
+        </div>
+      </div>
+      <div class="skel-wgrid">
+        <div class="skel-block"></div><div class="skel-block"></div>
+        <div class="skel-block"></div><div class="skel-block"></div>
+      </div>
+    </div>`;
+
   function renderMorning() {
     const root = document.getElementById('view-morning');
 
@@ -1033,9 +1265,9 @@
     // ---- Weather ----
     let weatherBody;
     if (morningState.weatherErr) {
-      weatherBody = `<p class="morning-error">⚠️ ${esc(morningState.weatherErr)}</p>`;
+      weatherBody = `<p class="morning-error">${esc(morningState.weatherErr)}</p>`;
     } else if (!morningState.weather) {
-      weatherBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading weather…</div>`;
+      weatherBody = skelWeather();
     } else {
       const w     = morningState.weather;
       const cur   = w.current_condition[0];
@@ -1043,16 +1275,23 @@
       const area  = w.nearest_area[0];
       const city  = area.areaName[0].value;
       const hour  = new Date().getHours();
-      const wmo   = wmoInfo(parseInt(cur.weatherCode), hour);
+      const wdesc = cur.weatherDesc?.[0]?.value?.trim() || '';
+      const wx    = weatherInfo(parseInt(cur.weatherCode, 10), wdesc, hour);
       const rain  = day.hourly.reduce((s, h) => s + parseFloat(h.precipMM), 0);
       const astro = day.astronomy[0];
       weatherBody = `
         <div class="weather-main">
-          <span class="weather-icon">${wmo.icon}</span>
+          <span class="weather-icon">${wx.icon}</span>
           <div>
             <div class="weather-temp-big">${cur.temp_C}<sup>°C</sup></div>
-            <div class="weather-desc">${wmo.desc}</div>
-            <div class="weather-location">📍 ${esc(city)}</div>
+            <div class="weather-desc">${esc(wx.desc)}</div>
+            ${cur.FeelsLikeC ? `<div class="weather-feels">Feels like ${cur.FeelsLikeC}°</div>` : ''}
+            <button class="weather-location" data-action="change-city" aria-label="Change city">
+              <svg class="weather-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+                <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="2.5"/>
+              </svg>
+              <span class="weather-city">${esc(city)}</span>
+            </button>
           </div>
         </div>
         <div class="weather-details">
@@ -1062,8 +1301,8 @@
           <div class="weather-detail"><span class="wk">Wind</span><span class="wv">${cur.windspeedKmph} km/h</span></div>
         </div>
         <div class="weather-sun-row">
-          <span>🌅 ${esc(astro.sunrise)}</span>
-          <span>🌇 ${esc(astro.sunset)}</span>
+          <span><span class="sun-k">Sunrise</span> ${esc(astro.sunrise)}</span>
+          <span><span class="sun-k">Sunset</span> ${esc(astro.sunset)}</span>
         </div>`;
     }
 
@@ -1072,9 +1311,9 @@
     if (!window.JULIEN_CALENDAR_ICAL_URL || window.JULIEN_CALENDAR_ICAL_URL.startsWith('REPLACE_ME')) {
       calBody = `<p class="cal-setup-note">Add <code>JULIEN_CALENDAR_ICAL_URL</code> to <code>config.js</code> to connect your calendar.</p>`;
     } else if (morningState.calErr) {
-      calBody = `<p class="morning-error">⚠️ ${esc(morningState.calErr)}</p>`;
+      calBody = `<p class="morning-error">${esc(morningState.calErr)}</p>`;
     } else if (!morningState.calendar.today.length && !morningState.calendar.tomorrow.length && !morningState.calErr) {
-      calBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading calendar…</div>`;
+      calBody = skelLines(['45%','80%','62%','45%','70%']);
     } else {
       function renderDayEvents(evs, label) {
         const items = evs.map(ev => {
@@ -1100,15 +1339,14 @@
     // ---- News ----
     let newsBody;
     if (morningState.newsErr) {
-      newsBody = `<p class="morning-error">⚠️ ${esc(morningState.newsErr)}</p>`;
+      newsBody = `<p class="morning-error">${esc(morningState.newsErr)}</p>`;
     } else if (!morningState.news) {
-      newsBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading news…</div>`;
+      newsBody = skelLines(['88%','72%','80%','66%','78%']);
     } else {
       newsBody = morningState.news.map(item => `
         <div class="news-item">
           <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
             <div class="news-title">${esc(item.title)}</div>
-            <div class="news-meta">${esc(item.pubDate)}</div>
           </a>
         </div>`).join('');
     }
@@ -1116,15 +1354,14 @@
     // ---- Berlin events ----
     let eventsBody;
     if (morningState.eventsErr) {
-      eventsBody = `<p class="morning-error">⚠️ ${esc(morningState.eventsErr)}</p>`;
+      eventsBody = `<p class="morning-error">${esc(morningState.eventsErr)}</p>`;
     } else if (!morningState.events) {
-      eventsBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading events…</div>`;
+      eventsBody = skelLines(['82%','70%','86%','64%']);
     } else {
       eventsBody = morningState.events.map(item => `
         <div class="news-item">
           <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
             <div class="news-title">${esc(item.title)}</div>
-            <div class="news-meta">${esc(item.pubDate)}</div>
           </a>
         </div>`).join('');
     }
@@ -1135,9 +1372,9 @@
     if (todayDow === 0 || todayDow === 6) {
       transitBody = `<p class="morning-muted">Weekdays only.</p>`;
     } else if (morningState.transitErr) {
-      transitBody = `<p class="morning-error">⚠️ ${esc(morningState.transitErr)}</p>`;
+      transitBody = `<p class="morning-error">${esc(morningState.transitErr)}</p>`;
     } else if (morningState.transit === null) {
-      transitBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading departures…</div>`;
+      transitBody = skelLines(['60%','55%','50%']);
     } else if (!morningState.transit.length) {
       transitBody = `<p class="morning-muted">No upcoming U7 → Spandau departures.</p>`;
     } else {
@@ -1163,9 +1400,9 @@
     if (!window.DISCOGS_USERNAME || window.DISCOGS_USERNAME.startsWith('REPLACE_ME')) {
       recordBody = `<p class="cal-setup-note">Add <code>DISCOGS_USERNAME</code> and <code>DISCOGS_TOKEN</code> to <code>config.js</code>.</p>`;
     } else if (morningState.recordErr) {
-      recordBody = `<p class="morning-error">⚠️ ${esc(morningState.recordErr)}</p>`;
+      recordBody = `<p class="morning-error">${esc(morningState.recordErr)}</p>`;
     } else if (morningState.record === null) {
-      recordBody = `<div class="morning-loading"><div class="spinner" style="width:18px;height:18px;border-width:2px"></div>Loading record…</div>`;
+      recordBody = skelLines(['70%','85%','50%']);
     } else if (!morningState.record) {
       recordBody = `<p class="morning-muted">Collection is empty.</p>`;
     } else {
@@ -1189,9 +1426,22 @@
         ${r.notes ? `<p class="record-notes">${esc(r.notes)}</p>` : ''}`;
     }
 
+    // ---- Freshness / refresh ----
+    const refreshing = !morningState.lastFetched;
+    const refreshRow = `
+      <div class="morning-refresh">
+        <span class="morning-updated">${refreshing ? 'Updating…' : `Updated ${formatAgo(morningState.lastFetched)}`}</span>
+        <button class="morning-refresh-btn${refreshing ? ' spinning' : ''}" data-action="refresh-morning" aria-label="Refresh" ${refreshing ? 'disabled' : ''}>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
+          </svg>
+        </button>
+      </div>`;
+
     root.innerHTML = `
       <div class="morning-grid">
         ${yearCard}
+        ${refreshRow}
         <div class="morning-card">
           <div class="morning-card-title">Weather</div>
           ${weatherBody}
@@ -1209,7 +1459,7 @@
           ${recordBody}
         </div>
         <div class="morning-card">
-          <div class="morning-card-title">World News</div>
+          <div class="morning-card-title">Actualités</div>
           ${newsBody}
         </div>
         <div class="morning-card">
@@ -1267,7 +1517,20 @@
     if (!el) return;
     const { action, id, date } = el.dataset;
 
-    if (action === 'toggle') {
+    if (action === 'refresh-morning') {
+      morningState.lastFetched = null;
+      initMorningView();
+    } else if (action === 'change-city') {
+      const current = localStorage.getItem(WEATHER_CITY_KEY) || 'Paris';
+      const city = prompt('Change weather city:', current);
+      if (city && city.trim()) {
+        localStorage.setItem(WEATHER_CITY_KEY, city.trim());
+        morningState.weather = null;
+        morningState.weatherErr = null;
+        renderMorning();
+        fetchWeather().catch(err => { morningState.weatherErr = err.message; }).then(() => renderMorning());
+      }
+    } else if (action === 'toggle') {
       if (e.target.closest('[data-action="edit"]')) return;
       toggle(id, todayStr());
     } else if (action === 'edit') {
@@ -1285,6 +1548,10 @@
       renderToday();
     } else if (action === 'today-week-fwd') {
       if (state.todayWeekOffset > 0) { state.todayWeekOffset--; renderToday(); }
+    } else if (action === 'stats-filter') {
+      const h = el.dataset.habit;
+      statsHabit = h === 'all' ? null : state.habits.find(x => x.id === h) || null;
+      renderStats();
     }
   });
 
@@ -1303,8 +1570,9 @@
       document.querySelectorAll('.view').forEach(s => s.classList.remove('active'));
       document.getElementById(`view-${v}`).classList.add('active');
 
-      const titles = { morning:'Morning', today:'Today', history:'History', stats:'Stats' };
-      document.getElementById('page-title').textContent = titles[v];
+      const titles = { morning:'Morning', today:'Today', todo:'Todo', history:'History', stats:'Stats' };
+      document.getElementById('page-title').textContent =
+        v === 'morning' ? greeting() : (titles[v] || v);
 
       // Show/hide FAB
       document.getElementById('fab').style.display = v === 'today' ? '' : 'none';
@@ -1347,4 +1615,5 @@
   // Init
   // ============================================================
   load();
+  if (window.initTodo) window.initTodo();
 })();
