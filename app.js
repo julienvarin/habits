@@ -1327,11 +1327,15 @@
     topbar.classList.toggle('scrolled', window.scrollY > 8);
   }, { passive: true });
 
-  // Re-fetch on tab focus (picks up changes made on another device)
-  window.addEventListener('focus', () => {
+  // Re-fetch when the tab becomes visible / focused (picks up changes made on another device).
+  // visibilitychange is more reliable than focus in iOS PWAs.
+  function refetchOnReturn() {
+    if (document.visibilityState !== 'visible') return;
     if (!state.loading) load();
     if (state.view === 'morning') initMorningView();
-  });
+  }
+  window.addEventListener('focus', refetchOnReturn);
+  document.addEventListener('visibilitychange', refetchOnReturn);
 
   // ============================================================
   // Date label
