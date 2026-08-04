@@ -1601,6 +1601,7 @@
     if (document.visibilityState !== 'visible') return;
     if (!state.loading) load();
     if (state.view === 'morning') initMorningView();
+    if (window.syncTodos) window.syncTodos();
   }
   window.addEventListener('focus', refetchOnReturn);
   document.addEventListener('visibilitychange', refetchOnReturn);

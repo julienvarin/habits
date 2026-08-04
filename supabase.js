@@ -67,5 +67,28 @@
         { method: "DELETE", headers: headers() }
       );
     },
+    listTodos() {
+      return req("/todos?select=*&order=created_at.desc", { headers: headers() });
+    },
+    addTodo(todo) {
+      return req("/todos", {
+        method: "POST",
+        headers: headers({ Prefer: "return=minimal,resolution=merge-duplicates" }),
+        body: JSON.stringify(todo),
+      });
+    },
+    updateTodo(id, patch) {
+      return req("/todos?id=eq." + encodeURIComponent(id), {
+        method: "PATCH",
+        headers: headers(),
+        body: JSON.stringify(patch),
+      });
+    },
+    deleteTodo(id) {
+      return req("/todos?id=eq." + encodeURIComponent(id), {
+        method: "DELETE",
+        headers: headers(),
+      });
+    },
   };
 })();
