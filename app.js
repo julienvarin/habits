@@ -9,7 +9,8 @@
     entries: new Set(),   // "habitId|YYYY-MM-DD"
     view:    'today',
     loading: true,
-    historyOffset: 0,  // 0 = current period, +1 = one period back, etc.
+    historyOffset: 0,     // 0 = current period, +1 = one period back, etc.
+    todayWeekOffset: 0,   // 0 = this week, +1 = last week, etc.
   };
 
   const COLORS = [
@@ -211,11 +212,12 @@
   // Render: Today (card layout with embedded calendar)
   // ============================================================
   function buildCardCal(habitId) {
-    // Single row: current week Mon–Sun
-    const today      = new Date();
-    const todayS     = todayStr();
-    const todayDow   = (today.getDay() + 6) % 7; // Mon=0
-    const thisMonday = shiftDays(today, -todayDow);
+    // Single row: Mon–Sun of the week selected by state.todayWeekOffset
+    const today       = new Date();
+    const todayS      = todayStr();
+    const todayDow    = (today.getDay() + 6) % 7; // Mon=0
+    const thisMonday  = shiftDays(today, -todayDow);
+    const weekMonday  = shiftDays(thisMonday, -7 * state.todayWeekOffset);
 
     const COL_LABELS = ['M','T','W','T','F','S','S'];
 
@@ -224,7 +226,7 @@
 
     const cells = [];
     for (let d = 0; d < 7; d++) {
-      const date = shiftDays(thisMonday, d);
+      const date = shiftDays(weekMonday, d);
       const ds   = fmtDate(date);
       const on   = hasTick(habitId, ds);
       const isFut = ds > todayS;
@@ -271,6 +273,28 @@
       </div>`;
   }
 
+  function buildWeekNav() {
+    const off        = state.todayWeekOffset;
+    const today      = new Date();
+    const todayDow   = (today.getDay() + 6) % 7;
+    const thisMonday = shiftDays(today, -todayDow);
+    const weekMonday = shiftDays(thisMonday, -7 * off);
+    const weekSunday = shiftDays(weekMonday, 6);
+    const MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+    const sameMonth = weekMonday.getMonth() === weekSunday.getMonth();
+    const label = off === 0
+      ? 'This week'
+      : sameMonth
+        ? `${MONTHS[weekMonday.getMonth()]} ${weekMonday.getDate()}–${weekSunday.getDate()}`
+        : `${MONTHS[weekMonday.getMonth()]} ${weekMonday.getDate()} – ${MONTHS[weekSunday.getMonth()]} ${weekSunday.getDate()}`;
+    return `
+      <div class="week-nav">
+        <button class="week-nav-btn" data-action="today-week-back" aria-label="Previous week">‹</button>
+        <span class="week-nav-label${off > 0 ? ' past' : ''}">${label}</span>
+        <button class="week-nav-btn" data-action="today-week-fwd" aria-label="Next week" ${off === 0 ? 'disabled' : ''}>›</button>
+      </div>`;
+  }
+
   function renderToday() {
     const root  = document.getElementById('view-today');
     if (state.loading) return;
@@ -287,7 +311,7 @@
     }
 
     const groups = groupBySection(state.habits);
-    let html = '';
+    let html = buildWeekNav();
 
     for (const [section, habits] of groups) {
       const cards = habits.map(h => buildHabitCard(h, today)).join('');
@@ -1256,6 +1280,11 @@
       renderHistory();
     } else if (action === 'history-fwd') {
       if (state.historyOffset > 0) { state.historyOffset--; renderHistory(); }
+    } else if (action === 'today-week-back') {
+      state.todayWeekOffset++;
+      renderToday();
+    } else if (action === 'today-week-fwd') {
+      if (state.todayWeekOffset > 0) { state.todayWeekOffset--; renderToday(); }
     }
   });
 
@@ -1264,6 +1293,7 @@
     btn.addEventListener('click', () => {
       const v = btn.dataset.view;
       if (state.view === v) return;
+      if (state.view === 'today' && v !== 'today') state.todayWeekOffset = 0;
       state.view = v;
 
       document.querySelectorAll('.tab').forEach(t => {
