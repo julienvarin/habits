@@ -30,3 +30,18 @@ drop policy if exists "anon all" on habits;
 drop policy if exists "anon all" on entries;
 create policy "anon all" on habits for all to anon using (true) with check (true);
 create policy "anon all" on entries for all to anon using (true) with check (true);
+
+create table if not exists todos (
+  id text primary key,
+  text text not null,
+  label text,
+  done boolean not null default false,
+  created_at bigint not null,
+  done_at bigint
+);
+
+create index if not exists todos_done_created_idx on todos(done, created_at desc);
+
+alter table todos enable row level security;
+drop policy if exists "anon all" on todos;
+create policy "anon all" on todos for all to anon using (true) with check (true);

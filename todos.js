@@ -1,25 +1,52 @@
 (function () {
   'use strict';
 
-  const STORE_KEY = 'habits.todos.v1';
+  const CACHE_KEY = 'habits.todos.v1';        // last-known-good list, doubles as pre-Supabase migration source
+  const QUEUE_KEY = 'habits.todos.queue.v1';  // writes that couldn't reach Supabase
   let todos        = [];
   let pendingLabel = null;
   let activeFilter = null;
   let eventsReady  = false;
 
   // ============================================================
-  // Storage
+  // Storage (local cache + offline write queue)
   // ============================================================
-  function loadStore() {
-    try { todos = JSON.parse(localStorage.getItem(STORE_KEY) || '[]'); }
+  function loadCache() {
+    try { todos = JSON.parse(localStorage.getItem(CACHE_KEY) || '[]'); }
     catch { todos = []; }
   }
-  function saveStore() { localStorage.setItem(STORE_KEY, JSON.stringify(todos)); }
+  function saveCache() { localStorage.setItem(CACHE_KEY, JSON.stringify(todos)); }
+
+  function queuePush(op) {
+    const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+    q.push(op);
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(q));
+  }
+  async function flushQueue() {
+    if (!window.db) return;
+    const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
+    if (!q.length) return;
+    const remaining = [];
+    for (const op of q) {
+      try {
+        if      (op.op === 'add')    await window.db.addTodo(op.payload);
+        else if (op.op === 'update') await window.db.updateTodo(op.id, op.patch);
+        else if (op.op === 'delete') await window.db.deleteTodo(op.id);
+      } catch {
+        remaining.push(op);
+      }
+    }
+    localStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
+  }
 
   // ============================================================
   // Helpers
   // ============================================================
   function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2, 7); }
+
+  function sortTodos(list) {
+    return list.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  }
 
   function allLabels() {
     const seen = new Set();
@@ -40,8 +67,59 @@
   const _ESC = { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' };
   function esc(s) { return String(s).replace(/[&<>"']/g, c => _ESC[c]); }
 
+  // Map local todo shape ↔ DB row shape (both use snake_case timestamps on the wire).
+  function toRow(t) {
+    return {
+      id: t.id,
+      text: t.text,
+      label: t.label,
+      done: !!t.done,
+      created_at: t.createdAt,
+      done_at: t.doneAt || null,
+    };
+  }
+  function fromRow(r) {
+    return {
+      id: r.id,
+      text: r.text,
+      label: r.label,
+      done: !!r.done,
+      createdAt: r.created_at,
+      doneAt: r.done_at,
+    };
+  }
+
   // ============================================================
-  // Actions
+  // Sync
+  // ============================================================
+  async function sync() {
+    if (!window.db) return;
+    try {
+      // 1. Push any queued writes (offline mutations)
+      await flushQueue();
+
+      // 2. Fetch remote state
+      const remote = (await window.db.listTodos() || []).map(fromRow);
+      const remoteIds = new Set(remote.map(t => t.id));
+
+      // 3. Upload local-only items (first-time migration from localStorage or offline creates
+      //    that never made it to the queue for whatever reason)
+      const localOnly = todos.filter(t => !remoteIds.has(t.id));
+      for (const t of localOnly) {
+        try { await window.db.addTodo(toRow(t)); remote.push(t); }
+        catch { /* stay in cache; next sync will retry */ }
+      }
+
+      todos = sortTodos(remote);
+      saveCache();
+      render();
+    } catch {
+      // offline — keep cached state
+    }
+  }
+
+  // ============================================================
+  // Actions (optimistic + queue on failure)
   // ============================================================
   function addTodo(raw) {
     let text  = (raw || '').trim();
@@ -56,33 +134,55 @@
     }
     if (!text) return;
 
-    todos.unshift({ id: uid(), text, label: label || null, done: false, createdAt: Date.now() });
-    saveStore();
+    const todo = { id: uid(), text, label: label || null, done: false, createdAt: Date.now() };
+    todos.unshift(todo);
+    saveCache();
     pendingLabel = null;
     render();
+
     const inp = document.getElementById('todo-input');
     if (inp) { inp.value = ''; inp.focus(); }
+
+    if (window.db) {
+      window.db.addTodo(toRow(todo)).catch(() => queuePush({ op: 'add', payload: toRow(todo) }));
+    }
   }
 
   function toggleItem(id) {
     const t = todos.find(x => x.id === id);
     if (!t) return;
-    t.done  = !t.done;
+    t.done   = !t.done;
     t.doneAt = t.done ? Date.now() : null;
-    saveStore();
+    saveCache();
     render();
+
+    if (window.db) {
+      const patch = { done: t.done, done_at: t.doneAt };
+      window.db.updateTodo(id, patch).catch(() => queuePush({ op: 'update', id, patch }));
+    }
   }
 
   function deleteItem(id) {
     todos = todos.filter(x => x.id !== id);
-    saveStore();
+    saveCache();
     render();
+
+    if (window.db) {
+      window.db.deleteTodo(id).catch(() => queuePush({ op: 'delete', id }));
+    }
   }
 
   function clearDone() {
+    const doneIds = todos.filter(x => x.done).map(x => x.id);
     todos = todos.filter(x => !x.done);
-    saveStore();
+    saveCache();
     render();
+
+    if (window.db) {
+      for (const id of doneIds) {
+        window.db.deleteTodo(id).catch(() => queuePush({ op: 'delete', id }));
+      }
+    }
   }
 
   function setPendingLabel(lbl) {
@@ -95,7 +195,6 @@
   // Render
   // ============================================================
   function render() {
-    loadStore();
     const root = document.getElementById('view-todo');
     if (!root) return;
 
@@ -247,11 +346,13 @@
   // Init
   // ============================================================
   function initTodo() {
-    loadStore();
-    render();
+    loadCache();
+    render();                                    // paint from cache immediately
     if (!eventsReady) { attachEvents(); eventsReady = true; }
+    sync();                                       // fetch/push in background
   }
 
   window.initTodo   = initTodo;
   window.renderTodo = render;
+  window.syncTodos  = sync;
 })();
