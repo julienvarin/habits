@@ -532,9 +532,16 @@
       if (dstr < createdStr(scope)) return null;
       return hasTick(scope.id, dstr) ? 1 : 0;
     }
-    const active = state.habits.filter(h => dstr >= createdStr(h));
-    if (!active.length) return null;
-    return active.filter(h => hasTick(h.id, dstr)).length / active.length;
+    let done = 0, active = 0;
+    for (const h of state.habits) {
+      if (dstr >= createdStr(h)) { active++; if (hasTick(h.id, dstr)) done++; }
+    }
+    // Journaling counts as one more tracked item in the "all habits" aggregate,
+    // active from its first entry onward (see journal.js / journalScore).
+    const j = window.journalScore;
+    if (j && j.activeOn(dstr)) { active++; if (j.doneOn(dstr)) done++; }
+    if (!active) return null;
+    return done / active;
   }
 
   // 7-day trailing completion rate for each of the last `days` days (%)
@@ -794,6 +801,9 @@
     renderHistory();
     renderStats();
   }
+
+  // Let journal.js refresh the Stats aggregates after a journal edit.
+  window.renderStats = renderStats;
 
   // ============================================================
   // Modal: add / edit habit
@@ -1570,7 +1580,7 @@
       document.querySelectorAll('.view').forEach(s => s.classList.remove('active'));
       document.getElementById(`view-${v}`).classList.add('active');
 
-      const titles = { morning:'Morning', today:'Today', todo:'Todo', history:'History', stats:'Stats' };
+      const titles = { morning:'Morning', today:'Today', todo:'Todo', journal:'Journal', history:'History', stats:'Stats' };
       document.getElementById('page-title').textContent =
         v === 'morning' ? greeting() : (titles[v] || v);
 
@@ -1578,6 +1588,7 @@
       document.getElementById('fab').style.display = v === 'today' ? '' : 'none';
 
       if (v === 'morning') initMorningView();
+      if (v === 'journal' && window.renderJournal) window.renderJournal();
       renderProgress();
     });
   });
@@ -1602,6 +1613,7 @@
     if (!state.loading) load();
     if (state.view === 'morning') initMorningView();
     if (window.syncTodos) window.syncTodos();
+    if (window.syncJournal) window.syncJournal();
   }
   window.addEventListener('focus', refetchOnReturn);
   document.addEventListener('visibilitychange', refetchOnReturn);
@@ -1617,4 +1629,5 @@
   // ============================================================
   load();
   if (window.initTodo) window.initTodo();
+  if (window.initJournal) window.initJournal();
 })();

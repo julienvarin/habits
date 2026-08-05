@@ -30,6 +30,7 @@
     <section id="view-morning" class="view"></section>
     <section id="view-today"   class="view active"></section>
     <section id="view-todo"    class="view"></section>
+    <section id="view-journal" class="view"></section>
     <section id="view-history" class="view"></section>
     <section id="view-stats"   class="view"></section>
 
@@ -44,6 +45,9 @@
       </button>
       <button class="tab" data-view="todo"    role="tab" aria-selected="false">
         <span class="tab-icon">☐</span>Todo
+      </button>
+      <button class="tab" data-view="journal" role="tab" aria-selected="false">
+        <span class="tab-icon">✎</span>Journal
       </button>
       <button class="tab" data-view="history" role="tab" aria-selected="false">
         <span class="tab-icon">▦</span>History
@@ -79,7 +83,11 @@
           s2.onload = function() {
             var s3 = document.createElement('script'); s3.src = 'todos.js';
             s3.onload = function() {
-              var s4 = document.createElement('script'); s4.src = 'app.js';
+              var s4 = document.createElement('script'); s4.src = 'journal.js';
+              s4.onload = function() {
+                var s5 = document.createElement('script'); s5.src = 'app.js';
+                document.body.appendChild(s5);
+              };
               document.body.appendChild(s4);
             };
             document.body.appendChild(s3);

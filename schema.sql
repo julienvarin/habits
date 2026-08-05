@@ -45,3 +45,20 @@ create index if not exists todos_done_created_idx on todos(done, created_at desc
 alter table todos enable row level security;
 drop policy if exists "anon all" on todos;
 create policy "anon all" on todos for all to anon using (true) with check (true);
+
+-- One journal entry per day. "day_text" is the short note about the day;
+-- "learnt_text" is the things-I-learnt section. A day counts toward the
+-- journaling streak when day_text is non-empty (see journal.js).
+create table if not exists journal (
+  date date primary key,
+  day_text text,
+  learnt_text text,
+  updated_at bigint,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists journal_date_idx on journal(date desc);
+
+alter table journal enable row level security;
+drop policy if exists "anon all" on journal;
+create policy "anon all" on journal for all to anon using (true) with check (true);

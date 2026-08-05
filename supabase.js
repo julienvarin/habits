@@ -90,5 +90,22 @@
         headers: headers(),
       });
     },
+    listJournal() {
+      return req("/journal?select=*&order=date.desc", { headers: headers() });
+    },
+    upsertJournal(entry) {
+      // Upsert on the `date` primary key.
+      return req("/journal", {
+        method: "POST",
+        headers: headers({ Prefer: "return=minimal,resolution=merge-duplicates" }),
+        body: JSON.stringify(entry),
+      });
+    },
+    deleteJournal(date) {
+      return req("/journal?date=eq." + encodeURIComponent(date), {
+        method: "DELETE",
+        headers: headers(),
+      });
+    },
   };
 })();
