@@ -1286,7 +1286,7 @@
     morningState.transit = (data.departures || [])
       .filter(d => d.line?.name?.replace(/\s+/g, '') === 'U7'
                 && d.direction?.toLowerCase().includes('spandau'))
-      .slice(0, 3);
+      .slice(0, 5);
   }
 
   async function fetchDiscogsRecord() {
@@ -1557,7 +1557,7 @@
     } else if (morningState.transitErr) {
       transitBody = `<p class="morning-error">${esc(morningState.transitErr)}</p>`;
     } else if (morningState.transit === null) {
-      transitBody = skelLines(['60%','55%','50%']);
+      transitBody = skelLines(['60%','55%','50%','58%','52%']);
     } else if (!morningState.transit.length) {
       transitBody = `<p class="morning-muted">No upcoming U7 → Spandau departures.</p>`;
     } else {
