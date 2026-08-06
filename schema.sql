@@ -53,9 +53,16 @@ create table if not exists journal (
   date date primary key,
   day_text text,
   learnt_text text,
+  tomorrow_text text,
+  big_done boolean not null default false,
   updated_at bigint,
   created_at timestamptz not null default now()
 );
+
+-- Migration: "one thing to do tomorrow" + whether that day's big task got done.
+-- The big task for a given day is the previous day's tomorrow_text (see journal.js).
+alter table journal add column if not exists tomorrow_text text;
+alter table journal add column if not exists big_done boolean not null default false;
 
 create index if not exists journal_date_idx on journal(date desc);
 
