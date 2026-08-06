@@ -1007,6 +1007,7 @@
     news: null, newsErr: null,
     events: null, eventsErr: null,
     reddit: null, redditErr: null,
+    hn: null, hnErr: null,
     transit: null, transitErr: null,
     record: null, recordErr: null,
     lastFetched: null,
@@ -1028,6 +1029,7 @@
       morningState.news      = c.news    || null;
       morningState.events    = c.events  || null;
       morningState.reddit    = c.reddit  || null;
+      morningState.hn        = c.hn      || null;
       morningState.lastFetched = c.lastFetched || null;
     } catch { /* ignore corrupt cache */ }
   }
@@ -1043,6 +1045,7 @@
         news:     morningState.news,
         events:   morningState.events,
         reddit:   morningState.reddit,
+        hn:       morningState.hn,
         lastFetched: morningState.lastFetched,
       }));
     } catch { /* ignore quota errors */ }
@@ -1217,6 +1220,31 @@
       morningState.events = await fetchRSSFeed('https://feeds.thelocal.com/rss/de', 5);
     } catch (err) {
       morningState.eventsErr = err.message;
+    }
+  }
+
+  // HN's Firebase API is CORS-friendly, so no proxy is needed. beststories.json
+  // returns ~200 story ids; fetch the item payload for the first `count` in
+  // parallel, and fall back to the discussion permalink for self-posts (no url).
+  async function fetchHackerNews(count = 5) {
+    try {
+      const idsResp = await fetch('https://hacker-news.firebaseio.com/v0/beststories.json');
+      if (!idsResp.ok) throw new Error(`HN ${idsResp.status}`);
+      const ids = (await idsResp.json()).slice(0, count);
+      const items = await Promise.all(ids.map(async id => {
+        const r = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
+        if (!r.ok) throw new Error(`HN ${r.status}`);
+        const it = await r.json();
+        const d  = it.time ? new Date(it.time * 1000) : null;
+        return {
+          title: it.title || '',
+          link:  it.url || `https://news.ycombinator.com/item?id=${it.id}`,
+          pubDate: d ? d.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '',
+        };
+      }));
+      morningState.hn = items;
+    } catch (err) {
+      morningState.hnErr = err.message;
     }
   }
 
@@ -1506,6 +1534,21 @@
         </div>`).join('');
     }
 
+    // ---- Hacker News ----
+    let hnBody;
+    if (morningState.hnErr) {
+      hnBody = `<p class="morning-error">${esc(morningState.hnErr)}</p>`;
+    } else if (!morningState.hn) {
+      hnBody = skelLines(['82%','68%','86%','60%','74%']);
+    } else {
+      hnBody = morningState.hn.map(item => `
+        <div class="news-item">
+          <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
+            <div class="news-title">${esc(item.title)}</div>
+          </a>
+        </div>`).join('');
+    }
+
     // ---- Transit ----
     const todayDow = new Date().getDay();
     let transitBody;
@@ -1610,6 +1653,10 @@
           <div class="morning-card-title">Reddit</div>
           ${redditBody}
         </div>
+        <div class="morning-card">
+          <div class="morning-card-title">Hacker News</div>
+          ${hnBody}
+        </div>
       </div>`;
   }
 
@@ -1622,6 +1669,7 @@
       morningState.news     = null; morningState.newsErr    = null;
       morningState.events   = null; morningState.eventsErr  = null;
       morningState.reddit   = null; morningState.redditErr  = null;
+      morningState.hn       = null; morningState.hnErr       = null;
       morningState.calErr   = null;
       morningState.calendar = { today: [], tomorrow: [] };
       morningState.record   = null; morningState.recordErr  = null;
@@ -1641,6 +1689,7 @@
         fetchNews(),
         fetchBerlinEvents(),
         fetchReddit(),
+        fetchHackerNews(),
         fetchDiscogsRecord().catch(err => { morningState.recordErr = err.message; }),
       );
     }
