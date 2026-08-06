@@ -1007,7 +1007,7 @@
     news: null, newsErr: null,
     events: null, eventsErr: null,
     reddit: null, redditErr: null,
-    ra: null, raErr: null,
+    hn: null, hnErr: null,
     transit: null, transitErr: null,
     record: null, recordErr: null,
     lastFetched: null,
@@ -1029,7 +1029,7 @@
       morningState.news      = c.news    || null;
       morningState.events    = c.events  || null;
       morningState.reddit    = c.reddit  || null;
-      morningState.ra        = c.ra      || null;
+      morningState.hn        = c.hn      || null;
       morningState.lastFetched = c.lastFetched || null;
     } catch { /* ignore corrupt cache */ }
   }
@@ -1045,7 +1045,7 @@
         news:     morningState.news,
         events:   morningState.events,
         reddit:   morningState.reddit,
-        ra:       morningState.ra,
+        hn:       morningState.hn,
         lastFetched: morningState.lastFetched,
       }));
     } catch { /* ignore quota errors */ }
@@ -1145,18 +1145,26 @@
     parseIcal(text);
   }
 
-  async function fetchRSSFeed(rssUrl, count) {
+  // opts: { filter?: (item) => boolean } — filter is applied BEFORE slicing to
+  // `count`, so callers get `count` matches (not `count` fetched then filtered).
+  async function fetchRSSFeed(rssUrl, count, opts) {
     // Prefer corsproxy.io (returns raw XML, handles both RSS <item> and Atom
     // <entry>). Some feeds — e.g. feeds.thelocal.com — get 403'd by the proxy,
     // so fall back to rss2json (server-side parse to JSON) in that case.
     try {
-      return await fetchRSSViaProxy(rssUrl, count);
+      return await fetchRSSViaProxy(rssUrl, count, opts);
     } catch (_) {
-      return await fetchRSSViaJson(rssUrl, count);
+      return await fetchRSSViaJson(rssUrl, count, opts);
     }
   }
 
-  async function fetchRSSViaProxy(rssUrl, count) {
+  function applyFeedFilter(items, count, opts) {
+    const filter = opts && opts.filter;
+    const kept = filter ? items.filter(filter) : items;
+    return kept.slice(0, count || 5);
+  }
+
+  async function fetchRSSViaProxy(rssUrl, count, opts) {
     const proxy = `https://corsproxy.io/?url=${encodeURIComponent(rssUrl)}`;
     const resp  = await fetch(proxy);
     if (!resp.ok) throw new Error(`RSS ${resp.status}`);
@@ -1165,7 +1173,7 @@
     // RSS 2.0 uses <item>; Atom (e.g. Reddit) uses <entry>. Support both.
     let nodes = [...doc.querySelectorAll('item')];
     if (!nodes.length) nodes = [...doc.querySelectorAll('entry')];
-    return nodes.slice(0, count || 5).map(el => {
+    const all = nodes.map(el => {
       const text = sel => el.querySelector(sel)?.textContent?.trim() || '';
       // RSS: <link>url</link>. Atom: <link href="url"/>.
       let link = text('link');
@@ -1175,25 +1183,28 @@
       const pubDate = d && !isNaN(d)
         ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
         : '';
-      return { title: text('title'), link, pubDate };
+      const author = text('author > name') || text('author') || '';
+      return { title: text('title'), link, pubDate, author };
     });
+    return applyFeedFilter(all, count, opts);
   }
 
-  async function fetchRSSViaJson(rssUrl, count) {
+  async function fetchRSSViaJson(rssUrl, count, opts) {
     const api  = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
     const resp = await fetch(api);
     if (!resp.ok) throw new Error(`RSS ${resp.status}`);
     const data = await resp.json();
     if (data.status !== 'ok') throw new Error(`RSS ${data.message || 'error'}`);
-    return (data.items || []).slice(0, count || 5).map(it => {
+    const all = (data.items || []).map(it => {
       // rss2json returns "YYYY-MM-DD HH:MM:SS" (UTC); normalize for Safari.
       const raw = it.pubDate || '';
       const d   = raw ? new Date(raw.replace(' ', 'T') + 'Z') : null;
       const pubDate = d && !isNaN(d)
         ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
         : '';
-      return { title: it.title || '', link: it.link || '', pubDate };
+      return { title: it.title || '', link: it.link || '', pubDate, author: it.author || '' };
     });
+    return applyFeedFilter(all, count, opts);
   }
 
   async function fetchNews() {
@@ -1212,19 +1223,49 @@
     }
   }
 
-  async function fetchReddit() {
+  // HN's Firebase API is CORS-friendly, so no proxy is needed. beststories.json
+  // returns ~200 story ids; fetch the item payload for the first `count` in
+  // parallel, and fall back to the discussion permalink for self-posts (no url).
+  async function fetchHackerNews(count = 5) {
     try {
-      morningState.reddit = await fetchRSSFeed('https://www.reddit.com/r/worldnews/.rss', 5);
+      const idsResp = await fetch('https://hacker-news.firebaseio.com/v0/beststories.json');
+      if (!idsResp.ok) throw new Error(`HN ${idsResp.status}`);
+      const ids = (await idsResp.json()).slice(0, count);
+      const items = await Promise.all(ids.map(async id => {
+        const r = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
+        if (!r.ok) throw new Error(`HN ${r.status}`);
+        const it = await r.json();
+        const d  = it.time ? new Date(it.time * 1000) : null;
+        return {
+          title: it.title || '',
+          link:  it.url || `https://news.ycombinator.com/item?id=${it.id}`,
+          pubDate: d ? d.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '',
+        };
+      }));
+      morningState.hn = items;
     } catch (err) {
-      morningState.redditErr = err.message;
+      morningState.hnErr = err.message;
     }
   }
 
-  async function fetchResidentAdvisor() {
+  async function fetchReddit() {
     try {
-      morningState.ra = await fetchRSSFeed('https://ra.co/xml/rss.xml', 5);
+      // Skip subreddit meta-posts (stickied megathreads, mod recruitment) — the
+      // author of those is typically a *Mods account, and the title starts with
+      // /r/<sub> or contains "Discussion Thread" / "looking for new moderators".
+      const isMeta = it => {
+        const t = (it.title || '').trim();
+        const a = (it.author || '').trim();
+        if (/^\/?r\//i.test(t)) return true;
+        if (/discussion thread|megathread|looking for new moderators|click here to apply/i.test(t)) return true;
+        if (/\bMods?\b/.test(a)) return true;
+        return false;
+      };
+      morningState.reddit = await fetchRSSFeed(
+        'https://www.reddit.com/r/worldnews/.rss', 5, { filter: it => !isMeta(it) }
+      );
     } catch (err) {
-      morningState.raErr = err.message;
+      morningState.redditErr = err.message;
     }
   }
 
@@ -1493,14 +1534,14 @@
         </div>`).join('');
     }
 
-    // ---- Resident Advisor ----
-    let raBody;
-    if (morningState.raErr) {
-      raBody = `<p class="morning-error">${esc(morningState.raErr)}</p>`;
-    } else if (!morningState.ra) {
-      raBody = skelLines(['80%','66%','84%','72%']);
+    // ---- Hacker News ----
+    let hnBody;
+    if (morningState.hnErr) {
+      hnBody = `<p class="morning-error">${esc(morningState.hnErr)}</p>`;
+    } else if (!morningState.hn) {
+      hnBody = skelLines(['82%','68%','86%','60%','74%']);
     } else {
-      raBody = morningState.ra.map(item => `
+      hnBody = morningState.hn.map(item => `
         <div class="news-item">
           <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
             <div class="news-title">${esc(item.title)}</div>
@@ -1613,8 +1654,8 @@
           ${redditBody}
         </div>
         <div class="morning-card">
-          <div class="morning-card-title">Resident Advisor</div>
-          ${raBody}
+          <div class="morning-card-title">Hacker News</div>
+          ${hnBody}
         </div>
       </div>`;
   }
@@ -1628,7 +1669,7 @@
       morningState.news     = null; morningState.newsErr    = null;
       morningState.events   = null; morningState.eventsErr  = null;
       morningState.reddit   = null; morningState.redditErr  = null;
-      morningState.ra       = null; morningState.raErr      = null;
+      morningState.hn       = null; morningState.hnErr       = null;
       morningState.calErr   = null;
       morningState.calendar = { today: [], tomorrow: [] };
       morningState.record   = null; morningState.recordErr  = null;
@@ -1648,7 +1689,7 @@
         fetchNews(),
         fetchBerlinEvents(),
         fetchReddit(),
-        fetchResidentAdvisor(),
+        fetchHackerNews(),
         fetchDiscogsRecord().catch(err => { morningState.recordErr = err.message; }),
       );
     }
