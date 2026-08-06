@@ -251,24 +251,41 @@
           <div class="card-drag-handle" aria-label="Drag to reorder">⠿</div>
           <div class="card-color-dot"></div>
           <h2 class="card-name">${esc(h.name)}</h2>
+          ${streak > 0
+            ? `<span class="card-streak-badge${isRecord ? ' record' : ''}"
+                     title="${streak} day${streak===1?'':'s'}${isRecord?' — new record!':''}">🔥 ${streak}</span>`
+            : ''}
           <button class="card-edit-btn" data-action="edit" data-id="${h.id}" aria-label="Edit ${esc(h.name)}">···</button>
         </div>
 
-        <button class="card-complete-btn ${done ? 'done' : ''}"
-                data-action="toggle" data-id="${h.id}">
-          ${done ? 'Completed — tap to undo' : 'Mark as complete'}
-        </button>
-
         ${buildCardCal(h.id, h.color)}
 
-        <div class="card-footer">
-          <span class="card-streak">
-            ${streak > 0
-              ? `🔥 <strong>${streak}</strong> day${streak===1?'':'s'}${isRecord?' (new record!)':''}`
-              : 'No streak yet'}
-          </span>
-          <span class="completed-tag ${done ? 'show' : ''}">✓ Completed Today</span>
-        </div>
+        ${done ? `<div class="card-footer"><span class="completed-tag show">✓ Completed Today</span></div>` : ''}
+      </div>`;
+  }
+
+  // "One big task" tile — today's big task is whatever was written as
+  // "one thing to do tomorrow" in yesterday's journal entry.
+  function buildBigTaskTile() {
+    const jb = window.journalBig;
+    if (!jb) return '';
+    const text = jb.todayText();
+    const done = jb.todayDone();
+    if (!text) {
+      return `
+        <div class="bigtask-tile empty">
+          <div class="bigtask-head"><span class="bigtask-icon">◎</span><span class="bigtask-label">One big task</span></div>
+          <p class="bigtask-empty">Set “one thing to do tomorrow” in your journal below — it shows up here tomorrow.</p>
+        </div>`;
+    }
+    return `
+      <div class="bigtask-tile ${done ? 'done' : ''}">
+        <div class="bigtask-head"><span class="bigtask-icon">◎</span><span class="bigtask-label">One big task</span></div>
+        <button class="bigtask-check ${done ? 'done' : ''}" data-action="toggle-bigtask"
+                aria-label="${done ? 'Mark big task not done' : 'Mark big task done'}">
+          <span class="bigtask-box"></span>
+          <span class="bigtask-text">${esc(text)}</span>
+        </button>
       </div>`;
   }
 
@@ -311,8 +328,10 @@
       journalNew  = true;
     }
 
+    const bigTile = buildBigTaskTile();
+
     if (!state.habits.length) {
-      habitsWrap.innerHTML = `
+      habitsWrap.innerHTML = bigTile + `
         <div class="empty">
           <div class="empty-icon">🌱</div>
           <h2>No habits yet</h2>
@@ -320,7 +339,7 @@
         </div>`;
     } else {
       const groups = groupBySection(state.habits);
-      let html = buildWeekNav();
+      let html = bigTile + buildWeekNav();
 
       for (const [section, habits] of groups) {
         const cards = habits.map(h => buildHabitCard(h, today)).join('');
@@ -710,6 +729,14 @@
         [`${j.yearCount(year)}`, `Entries ${year}`],
       );
     }
+    // One-big-task KPIs (all-habits scope only).
+    if (!scope && window.journalBig) {
+      const b = window.journalBig;
+      tiles.push(
+        [`${b.streak()}<span class="stat-sub">d</span>`, 'Big-task streak'],
+        [`${b.doneCount()}`, 'Big tasks done'],
+      );
+    }
     const overview = `<div class="stats-overview">${tiles.map(([v, l]) =>
       `<div class="stat-tile"><div class="num">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
 
@@ -979,6 +1006,8 @@
     calendar: { today: [], tomorrow: [] }, calErr: null,
     news: null, newsErr: null,
     events: null, eventsErr: null,
+    reddit: null, redditErr: null,
+    ra: null, raErr: null,
     transit: null, transitErr: null,
     record: null, recordErr: null,
     lastFetched: null,
@@ -999,6 +1028,8 @@
       morningState.calendar  = { today: restoreEvs(c.calendar?.today), tomorrow: restoreEvs(c.calendar?.tomorrow) };
       morningState.news      = c.news    || null;
       morningState.events    = c.events  || null;
+      morningState.reddit    = c.reddit  || null;
+      morningState.ra        = c.ra      || null;
       morningState.lastFetched = c.lastFetched || null;
     } catch { /* ignore corrupt cache */ }
   }
@@ -1013,6 +1044,8 @@
         calendar: { today: serEvs(morningState.calendar.today), tomorrow: serEvs(morningState.calendar.tomorrow) },
         news:     morningState.news,
         events:   morningState.events,
+        reddit:   morningState.reddit,
+        ra:       morningState.ra,
         lastFetched: morningState.lastFetched,
       }));
     } catch { /* ignore quota errors */ }
@@ -1113,8 +1146,40 @@
   }
 
   async function fetchRSSFeed(rssUrl, count) {
-    // rss2json bypasses CORS and returns parsed JSON. corsproxy.io started
-    // returning 403 to public feeds, so this replaced the previous XML+proxy path.
+    // Prefer corsproxy.io (returns raw XML, handles both RSS <item> and Atom
+    // <entry>). Some feeds — e.g. feeds.thelocal.com — get 403'd by the proxy,
+    // so fall back to rss2json (server-side parse to JSON) in that case.
+    try {
+      return await fetchRSSViaProxy(rssUrl, count);
+    } catch (_) {
+      return await fetchRSSViaJson(rssUrl, count);
+    }
+  }
+
+  async function fetchRSSViaProxy(rssUrl, count) {
+    const proxy = `https://corsproxy.io/?url=${encodeURIComponent(rssUrl)}`;
+    const resp  = await fetch(proxy);
+    if (!resp.ok) throw new Error(`RSS ${resp.status}`);
+    const xml = await resp.text();
+    const doc = new DOMParser().parseFromString(xml, 'text/xml');
+    // RSS 2.0 uses <item>; Atom (e.g. Reddit) uses <entry>. Support both.
+    let nodes = [...doc.querySelectorAll('item')];
+    if (!nodes.length) nodes = [...doc.querySelectorAll('entry')];
+    return nodes.slice(0, count || 5).map(el => {
+      const text = sel => el.querySelector(sel)?.textContent?.trim() || '';
+      // RSS: <link>url</link>. Atom: <link href="url"/>.
+      let link = text('link');
+      if (!link) link = el.querySelector('link')?.getAttribute('href') || '';
+      const raw  = text('pubDate') || text('published') || text('updated');
+      const d    = raw ? new Date(raw) : null;
+      const pubDate = d && !isNaN(d)
+        ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+        : '';
+      return { title: text('title'), link, pubDate };
+    });
+  }
+
+  async function fetchRSSViaJson(rssUrl, count) {
     const api  = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
     const resp = await fetch(api);
     if (!resp.ok) throw new Error(`RSS ${resp.status}`);
@@ -1147,11 +1212,27 @@
     }
   }
 
+  async function fetchReddit() {
+    try {
+      morningState.reddit = await fetchRSSFeed('https://www.reddit.com/r/worldnews/.rss', 5);
+    } catch (err) {
+      morningState.redditErr = err.message;
+    }
+  }
+
+  async function fetchResidentAdvisor() {
+    try {
+      morningState.ra = await fetchRSSFeed('https://ra.co/xml/rss.xml', 5);
+    } catch (err) {
+      morningState.raErr = err.message;
+    }
+  }
+
   async function fetchBVGDepartures() {
     const now = new Date();
     const dow = now.getDay(); // 0=Sun, 6=Sat
     if (dow === 0 || dow === 6) { morningState.transit = []; return; }
-    const STOP_ID = '900079201'; // Rathaus Neukölln U-Bahn
+    const STOP_ID = '900078102'; // Rathaus Neukölln U-Bahn (VBB DHID de:11000:900078102)
     // Request U-Bahn only. In this API every product flag defaults to true, so
     // `subway=true` alone does NOT exclude buses/trams — at a busy hub those
     // fill the `results` budget and crowd out the U7 departures we want.
@@ -1397,6 +1478,36 @@
         </div>`).join('');
     }
 
+    // ---- Reddit ----
+    let redditBody;
+    if (morningState.redditErr) {
+      redditBody = `<p class="morning-error">${esc(morningState.redditErr)}</p>`;
+    } else if (!morningState.reddit) {
+      redditBody = skelLines(['84%','70%','88%','62%','76%']);
+    } else {
+      redditBody = morningState.reddit.map(item => `
+        <div class="news-item">
+          <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
+            <div class="news-title">${esc(item.title)}</div>
+          </a>
+        </div>`).join('');
+    }
+
+    // ---- Resident Advisor ----
+    let raBody;
+    if (morningState.raErr) {
+      raBody = `<p class="morning-error">${esc(morningState.raErr)}</p>`;
+    } else if (!morningState.ra) {
+      raBody = skelLines(['80%','66%','84%','72%']);
+    } else {
+      raBody = morningState.ra.map(item => `
+        <div class="news-item">
+          <a href="${esc(item.link)}" target="_blank" rel="noopener noreferrer">
+            <div class="news-title">${esc(item.title)}</div>
+          </a>
+        </div>`).join('');
+    }
+
     // ---- Transit ----
     const todayDow = new Date().getDay();
     let transitBody;
@@ -1497,6 +1608,14 @@
           <div class="morning-card-title">Germany / Berlin</div>
           ${eventsBody}
         </div>
+        <div class="morning-card">
+          <div class="morning-card-title">Reddit</div>
+          ${redditBody}
+        </div>
+        <div class="morning-card">
+          <div class="morning-card-title">Resident Advisor</div>
+          ${raBody}
+        </div>
       </div>`;
   }
 
@@ -1508,6 +1627,8 @@
       morningState.weather  = null; morningState.weatherErr = null;
       morningState.news     = null; morningState.newsErr    = null;
       morningState.events   = null; morningState.eventsErr  = null;
+      morningState.reddit   = null; morningState.redditErr  = null;
+      morningState.ra       = null; morningState.raErr      = null;
       morningState.calErr   = null;
       morningState.calendar = { today: [], tomorrow: [] };
       morningState.record   = null; morningState.recordErr  = null;
@@ -1526,6 +1647,8 @@
         fetchCalendarEvents().catch(err => { morningState.calErr = err.message; }),
         fetchNews(),
         fetchBerlinEvents(),
+        fetchReddit(),
+        fetchResidentAdvisor(),
         fetchDiscogsRecord().catch(err => { morningState.recordErr = err.message; }),
       );
     }
@@ -1564,6 +1687,8 @@
     } else if (action === 'toggle') {
       if (e.target.closest('[data-action="edit"]')) return;
       toggle(id, todayStr());
+    } else if (action === 'toggle-bigtask') {
+      if (window.journalBig) { window.journalBig.toggleToday(); renderAll(); }
     } else if (action === 'edit') {
       e.stopPropagation();
       openModal(state.habits.find(h => h.id === id));

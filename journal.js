@@ -57,13 +57,22 @@
 
   // Map local shape <-> DB row shape
   function toRow(e) {
-    return { date: e.date, day_text: e.day || null, learnt_text: e.learnt || null, updated_at: e.updatedAt };
+    return {
+      date: e.date,
+      day_text: e.day || null,
+      learnt_text: e.learnt || null,
+      tomorrow_text: e.tomorrow || null,
+      big_done: !!e.bigDone,
+      updated_at: e.updatedAt,
+    };
   }
   function fromRow(r) {
     return {
       date: r.date,
       day: r.day_text || '',
       learnt: r.learnt_text || '',
+      tomorrow: r.tomorrow_text || '',
+      bigDone: !!r.big_done,
       updatedAt: r.updated_at || 0,
     };
   }
@@ -154,11 +163,70 @@
   };
 
   // ============================================================
+  // "One big task" — the single thing chosen the day before.
+  // Written on day D as `tomorrow`, it becomes day D+1's big task.
+  // ============================================================
+  function tomorrowText(dstr) {
+    const e = entries.get(dstr);
+    return e && e.tomorrow ? e.tomorrow.trim() : '';
+  }
+  // The big task assigned for `dstr` is yesterday's "tomorrow" note.
+  function bigTaskFor(dstr) {
+    return tomorrowText(fmtDate(shiftDays(parseDate(dstr), -1)));
+  }
+  function bigDoneOn(dstr) {
+    const e = entries.get(dstr);
+    return !!(e && e.bigDone);
+  }
+  function bigActiveOn(dstr) {
+    return !!bigTaskFor(dstr);
+  }
+  // Dates that HAVE a big task assigned (i.e. the day after any "tomorrow" note).
+  function bigAssignedDates() {
+    const out = [];
+    for (const [d, e] of entries) {
+      if (e.tomorrow && e.tomorrow.trim()) out.push(fmtDate(shiftDays(parseDate(d), 1)));
+    }
+    return out.sort();
+  }
+  function bigDoneCount() {
+    return bigAssignedDates().filter(bigDoneOn).length;
+  }
+  function bigStreak() {
+    const assigned = new Set(bigAssignedDates());
+    let d = new Date();
+    // Today's task may still be open — don't let that break the streak.
+    if (assigned.has(todayStr()) && !bigDoneOn(todayStr())) d = shiftDays(d, -1);
+    let n = 0;
+    while (assigned.has(fmtDate(d)) && bigDoneOn(fmtDate(d))) { n++; d = shiftDays(d, -1); }
+    return n;
+  }
+  function setBigDone(dstr, val) {
+    const e = getEntry(dstr);
+    e.bigDone = val;
+    entries.set(dstr, e);
+    persist(dstr);
+  }
+
+  window.journalBig = {
+    todayText:  () => bigTaskFor(todayStr()),
+    todayDone:  () => bigDoneOn(todayStr()),
+    toggleToday: () => setBigDone(todayStr(), !bigDoneOn(todayStr())),
+    activeOn:   bigActiveOn,
+    doneOn:     bigDoneOn,
+    streak:     bigStreak,
+    doneCount:  bigDoneCount,
+  };
+
+  // ============================================================
   // Persistence for the current editor
   // ============================================================
   function getEntry(dstr) {
     let e = entries.get(dstr);
-    if (!e) { e = { date: dstr, day: '', learnt: '', updatedAt: 0 }; }
+    if (!e) e = { date: dstr, day: '', learnt: '', tomorrow: '', bigDone: false, updatedAt: 0 };
+    // Normalize entries loaded before these fields existed.
+    if (e.tomorrow == null) e.tomorrow = '';
+    if (e.bigDone == null)  e.bigDone = false;
     return e;
   }
 
@@ -168,7 +236,7 @@
     const e = entries.get(dstr);
     if (!e) return;
 
-    const empty = !e.day.trim() && !e.learnt.trim();
+    const empty = !e.day.trim() && !e.learnt.trim() && !(e.tomorrow || '').trim() && !e.bigDone;
     if (empty) {
       entries.delete(dstr);
       saveCache();
@@ -256,14 +324,19 @@
     return `
       <div class="jr-editor">
         <div class="jr-field">
-          <label class="jr-label" for="jr-day">What I did today</label>
           <textarea id="jr-day" class="jr-textarea" rows="4" maxlength="2000"
-                    placeholder="went to the pool, saw Mac, run in the sun…" spellcheck="true"></textarea>
+                    aria-label="What I did today"
+                    placeholder="What I did today" spellcheck="true"></textarea>
         </div>
         <div class="jr-field">
-          <label class="jr-label" for="jr-learnt">What I learnt today</label>
           <textarea id="jr-learnt" class="jr-textarea" rows="4" maxlength="2000"
-                    placeholder="a new genre to dig on Discogs, a code trick, a YouTube video…" spellcheck="true"></textarea>
+                    aria-label="What I learnt today"
+                    placeholder="What I learnt today" spellcheck="true"></textarea>
+        </div>
+        <div class="jr-field">
+          <textarea id="jr-tomorrow" class="jr-textarea" rows="2" maxlength="500"
+                    aria-label="One thing to do tomorrow"
+                    placeholder="One thing to do tomorrow" spellcheck="true"></textarea>
         </div>
         <div class="jr-status-row"><span id="jr-status" class="jr-status"></span></div>
       </div>`;
@@ -294,11 +367,13 @@
     const e     = getEntry(viewDate);
     const dayEl = document.getElementById('jr-day');
     const lrnEl = document.getElementById('jr-learnt');
-    if (!dayEl || !lrnEl) return;
+    const tmrEl = document.getElementById('jr-tomorrow');
+    if (!dayEl || !lrnEl || !tmrEl) return;
 
     dayEl.value = e.day;
     lrnEl.value = e.learnt;
-    autosize(dayEl); autosize(lrnEl);
+    tmrEl.value = e.tomorrow;
+    autosize(dayEl); autosize(lrnEl); autosize(tmrEl);
 
     const onInput = (el, key) => {
       const cur = getEntry(viewDate);
@@ -311,8 +386,10 @@
 
     dayEl.addEventListener('input', () => onInput(dayEl, 'day'));
     lrnEl.addEventListener('input', () => onInput(lrnEl, 'learnt'));
+    tmrEl.addEventListener('input', () => onInput(tmrEl, 'tomorrow'));
     dayEl.addEventListener('blur',  () => flushPending());
     lrnEl.addEventListener('blur',  () => flushPending());
+    tmrEl.addEventListener('blur',  () => flushPending());
   }
 
   function autosize(el) {
