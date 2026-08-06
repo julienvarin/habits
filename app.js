@@ -9,7 +9,6 @@
     entries: new Set(),   // "habitId|YYYY-MM-DD"
     view:    'today',
     loading: true,
-    historyOffset: 0,     // 0 = current period, +1 = one period back, etc.
     todayWeekOffset: 0,   // 0 = this week, +1 = last week, etc.
   };
 
@@ -439,17 +438,9 @@
   }
 
   // ============================================================
-  // Render: History
+  // Stats: history heatmap block (rendered inside renderStats)
   // ============================================================
-  function renderHistory() {
-    const root = document.getElementById('view-history');
-    if (state.loading) return;
-
-    if (!state.habits.length) {
-      root.innerHTML = `<div class="empty"><div class="empty-icon">📅</div><h2>No habits yet</h2></div>`;
-      return;
-    }
-
+  function historyBlock(scope) {
     const year      = new Date().getFullYear();
     const todayS    = todayStr();
     const yearStart = new Date(year, 0, 1);
@@ -511,22 +502,27 @@
         </div>`;
     }
 
-    const groups = groupBySection(state.habits);
+    const habits = scope ? [scope] : state.habits;
     let cardsHtml = '';
-    for (const [section, habits] of groups) {
-      const cards = habits.map(buildHistoryCard).join('');
-      if (groups.size === 1 && !section) {
-        cardsHtml += cards;
-      } else {
-        cardsHtml += `
-          <div class="section-group">
-            <div class="section-header">${esc(section || 'General')}</div>
-            ${cards}
-          </div>`;
+    if (scope) {
+      cardsHtml = buildHistoryCard(scope);
+    } else {
+      const groups = groupBySection(habits);
+      for (const [section, hs] of groups) {
+        const cards = hs.map(buildHistoryCard).join('');
+        if (groups.size === 1 && !section) {
+          cardsHtml += cards;
+        } else {
+          cardsHtml += `
+            <div class="section-group">
+              <div class="section-header">${esc(section || 'General')}</div>
+              ${cards}
+            </div>`;
+        }
       }
     }
 
-    root.innerHTML = `<div class="history-year-label">${year}</div>${cardsHtml}`;
+    return `<div class="history-year-label">${year}</div>${cardsHtml}`;
   }
 
   // ============================================================
@@ -766,7 +762,7 @@
         </div>`;
     }
 
-    root.innerHTML = pills + overview + trendCard + rhythmCard + breakdown;
+    root.innerHTML = pills + overview + trendCard + rhythmCard + breakdown + historyBlock(scope);
     wireStatsCharts(root);
   }
 
@@ -822,7 +818,6 @@
   function renderAll() {
     renderProgress();
     renderToday();
-    renderHistory();
     renderStats();
   }
 
@@ -1572,11 +1567,6 @@
       openModal(state.habits.find(h => h.id === id));
     } else if (action === 'toggle-day') {
       toggle(id, date);
-    } else if (action === 'history-back') {
-      state.historyOffset++;
-      renderHistory();
-    } else if (action === 'history-fwd') {
-      if (state.historyOffset > 0) { state.historyOffset--; renderHistory(); }
     } else if (action === 'today-week-back') {
       state.todayWeekOffset++;
       renderToday();
@@ -1604,7 +1594,7 @@
       document.querySelectorAll('.view').forEach(s => s.classList.remove('active'));
       document.getElementById(`view-${v}`).classList.add('active');
 
-      const titles = { morning:'Morning', today:'Today', todo:'Todo', history:'History', stats:'Stats' };
+      const titles = { morning:'Morning', today:'Today', todo:'Todo', stats:'Stats' };
       document.getElementById('page-title').textContent =
         v === 'morning' ? greeting() : (titles[v] || v);
 
