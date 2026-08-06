@@ -1030,10 +1030,6 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 /* Editor */
 .jr-editor { display: flex; flex-direction: column; gap: 16px; margin-bottom: 22px; }
 .jr-field { display: flex; flex-direction: column; gap: 7px; }
-.jr-label {
-  font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--fg-dim);
-}
 .jr-textarea {
   width: 100%; resize: none; overflow: hidden;
   background: var(--bg-card); border: 1.5px solid var(--border);
