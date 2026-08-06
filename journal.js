@@ -140,14 +140,17 @@
     return best;
   }
 
-  // Exposed for the Stats tab so "all habits" aggregates include journaling.
+  // Exposed for the Stats tab so "all habits" aggregates include journaling
+  // and so the Stats page can surface journal KPIs directly.
   // Journaling is considered "active" from its first entry onward.
   window.journalScore = {
     activeOn: dstr => { const f = firstDayDate(); return f ? dstr >= f : false; },
     doneOn:   dstr => hasDay(dstr),
     firstDate: firstDayDate,
     count:    () => journaledDates().length,
+    yearCount: y => journaledDates().filter(d => d.startsWith(String(y))).length,
     streak:   currentStreak,
+    longest:  longestStreak,
   };
 
   // ============================================================
@@ -212,40 +215,6 @@
     return parseDate(dstr).toLocaleDateString(undefined, { weekday: 'long', month: 'short', day: 'numeric' });
   }
 
-  function scoreHtml() {
-    const streak  = currentStreak();
-    const longest = longestStreak();
-    const year    = new Date().getFullYear();
-    const total   = journaledDates().length;
-    const yearCt  = journaledDates().filter(d => d.startsWith(String(year))).length;
-
-    const headline = streak > 0
-      ? `<strong>${streak}</strong> day${streak === 1 ? '' : 's'} in a row`
-      : (total > 0 ? 'Streak broken — write today to restart' : 'Start your first entry');
-    const sub = streak > 0 && streak >= longest && longest > 1
-      ? 'New record! Keep it going.'
-      : 'A few lines a day.';
-
-    const tiles = [
-      [`${longest}<span class="jr-sub">d</span>`, 'Longest'],
-      [`${yearCt}`, `Entries ${year}`],
-      [`${total}`, 'Total'],
-    ];
-    return `
-      <div class="jr-score-card">
-        <div class="jr-score-head">
-          <span class="jr-flame">${streak > 0 ? '🔥' : '📓'}</span>
-          <div class="jr-score-headline">
-            <div class="jr-streak">${headline}</div>
-            <div class="jr-streak-sub">${esc(sub)}</div>
-          </div>
-        </div>
-        <div class="jr-tiles">
-          ${tiles.map(([v, l]) => `<div class="jr-tile"><div class="jr-tile-num">${v}</div><div class="jr-tile-lbl">${esc(l)}</div></div>`).join('')}
-        </div>
-      </div>`;
-  }
-
   function navHtml() {
     const isToday = viewDate >= todayStr();
     const has     = hasDay(viewDate);
@@ -287,12 +256,12 @@
     return `
       <div class="jr-editor">
         <div class="jr-field">
-          <label class="jr-label" for="jr-day">My day</label>
+          <label class="jr-label" for="jr-day">What I did today</label>
           <textarea id="jr-day" class="jr-textarea" rows="4" maxlength="2000"
                     placeholder="went to the pool, saw Mac, run in the sun…" spellcheck="true"></textarea>
         </div>
         <div class="jr-field">
-          <label class="jr-label" for="jr-learnt">Learnings</label>
+          <label class="jr-label" for="jr-learnt">What I learnt today</label>
           <textarea id="jr-learnt" class="jr-textarea" rows="4" maxlength="2000"
                     placeholder="a new genre to dig on Discogs, a code trick, a YouTube video…" spellcheck="true"></textarea>
         </div>
@@ -300,10 +269,9 @@
       </div>`;
   }
 
-  // Rebuild only the non-editor chrome (score / nav / recent) so typing never
+  // Rebuild only the non-editor chrome (nav / recent) so typing never
   // disturbs the textarea focus or caret.
   function renderMeta() {
-    const s = document.getElementById('jr-score');   if (s) s.innerHTML = scoreHtml();
     const n = document.getElementById('jr-nav-wrap'); if (n) n.innerHTML = navHtml();
     const r = document.getElementById('jr-recent-wrap'); if (r) r.innerHTML = recentHtml();
   }
@@ -313,11 +281,11 @@
     if (!root) return;
 
     root.innerHTML = `
-      <div id="jr-score">${scoreHtml()}</div>
       <div id="jr-nav-wrap">${navHtml()}</div>
       <div id="jr-editor-wrap">${editorHtml()}</div>
       <div id="jr-recent-wrap">${recentHtml()}</div>`;
 
+    attachClickEvents();
     hydrateEditor();
   }
 
@@ -360,9 +328,12 @@
   }
 
   // ============================================================
-  // Events (delegated once on the persistent #view-journal)
+  // Events
   // ============================================================
-  function attachEvents() {
+  // Delegated click handler — must be re-attached on each render because
+  // #view-journal now lives inside #view-today and gets recreated whenever
+  // Today re-renders (e.g. after a habit tick).
+  function attachClickEvents() {
     const root = document.getElementById('view-journal');
     if (!root) return;
 
@@ -386,15 +357,14 @@
   function initJournal() {
     loadCache();
     viewDate = todayStr();
-    render();
     if (!eventsReady) {
-      attachEvents();
       window.addEventListener('beforeunload', flushPending);
       document.addEventListener('visibilitychange', () => {
         if (document.visibilityState === 'hidden') flushPending();
       });
       eventsReady = true;
     }
+    render();
     sync();
   }
 

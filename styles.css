@@ -151,6 +151,9 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 /* ============================================================
    TODAY — CARD GRID
 ============================================================ */
+/* Journal sits below habits within the Today tab; give it breathing room */
+#view-today > #view-journal { margin-top: 28px; }
+
 .today-grid {
   display: grid;
   grid-template-columns: 1fr;
