@@ -256,14 +256,14 @@
     return `
       <div class="jr-editor">
         <div class="jr-field">
-          <label class="jr-label" for="jr-day">What I did today</label>
           <textarea id="jr-day" class="jr-textarea" rows="4" maxlength="2000"
-                    placeholder="went to the pool, saw Mac, run in the sun…" spellcheck="true"></textarea>
+                    aria-label="What I did today"
+                    placeholder="What I did today" spellcheck="true"></textarea>
         </div>
         <div class="jr-field">
-          <label class="jr-label" for="jr-learnt">What I learnt today</label>
           <textarea id="jr-learnt" class="jr-textarea" rows="4" maxlength="2000"
-                    placeholder="a new genre to dig on Discogs, a code trick, a YouTube video…" spellcheck="true"></textarea>
+                    aria-label="What I learnt today"
+                    placeholder="What I learnt today" spellcheck="true"></textarea>
         </div>
         <div class="jr-status-row"><span id="jr-status" class="jr-status"></span></div>
       </div>`;
