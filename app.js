@@ -1146,6 +1146,17 @@
   }
 
   async function fetchRSSFeed(rssUrl, count) {
+    // Prefer corsproxy.io (returns raw XML, handles both RSS <item> and Atom
+    // <entry>). Some feeds — e.g. feeds.thelocal.com — get 403'd by the proxy,
+    // so fall back to rss2json (server-side parse to JSON) in that case.
+    try {
+      return await fetchRSSViaProxy(rssUrl, count);
+    } catch (_) {
+      return await fetchRSSViaJson(rssUrl, count);
+    }
+  }
+
+  async function fetchRSSViaProxy(rssUrl, count) {
     const proxy = `https://corsproxy.io/?url=${encodeURIComponent(rssUrl)}`;
     const resp  = await fetch(proxy);
     if (!resp.ok) throw new Error(`RSS ${resp.status}`);
@@ -1165,6 +1176,23 @@
         ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
         : '';
       return { title: text('title'), link, pubDate };
+    });
+  }
+
+  async function fetchRSSViaJson(rssUrl, count) {
+    const api  = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
+    const resp = await fetch(api);
+    if (!resp.ok) throw new Error(`RSS ${resp.status}`);
+    const data = await resp.json();
+    if (data.status !== 'ok') throw new Error(`RSS ${data.message || 'error'}`);
+    return (data.items || []).slice(0, count || 5).map(it => {
+      // rss2json returns "YYYY-MM-DD HH:MM:SS" (UTC); normalize for Safari.
+      const raw = it.pubDate || '';
+      const d   = raw ? new Date(raw.replace(' ', 'T') + 'Z') : null;
+      const pubDate = d && !isNaN(d)
+        ? d.toLocaleDateString([], { month: 'short', day: 'numeric' })
+        : '';
+      return { title: it.title || '', link: it.link || '', pubDate };
     });
   }
 
