@@ -299,35 +299,49 @@
     if (state.loading) return;
     const today = todayStr();
 
+    // Ensure the two persistent children exist: habits area + journal area.
+    // #view-journal must survive habit re-renders so the textarea keeps focus.
+    let habitsWrap  = document.getElementById('today-habits');
+    let journalWrap = document.getElementById('view-journal');
+    let journalNew  = false;
+    if (!habitsWrap || !journalWrap) {
+      root.innerHTML = '<div id="today-habits"></div><div id="view-journal"></div>';
+      habitsWrap  = document.getElementById('today-habits');
+      journalWrap = document.getElementById('view-journal');
+      journalNew  = true;
+    }
+
     if (!state.habits.length) {
-      root.innerHTML = `
+      habitsWrap.innerHTML = `
         <div class="empty">
           <div class="empty-icon">🌱</div>
           <h2>No habits yet</h2>
           <p>Tap the <strong>+</strong> button below to add your first habit.</p>
         </div>`;
-      return;
-    }
+    } else {
+      const groups = groupBySection(state.habits);
+      let html = buildWeekNav();
 
-    const groups = groupBySection(state.habits);
-    let html = buildWeekNav();
-
-    for (const [section, habits] of groups) {
-      const cards = habits.map(h => buildHabitCard(h, today)).join('');
-      if (groups.size === 1 && !section) {
-        // Single group with no section name — no header needed
-        html += `<div class="today-grid">${cards}</div>`;
-      } else {
-        html += `
-          <div class="section-group">
-            <div class="section-header">${esc(section || 'General')}</div>
-            <div class="today-grid">${cards}</div>
-          </div>`;
+      for (const [section, habits] of groups) {
+        const cards = habits.map(h => buildHabitCard(h, today)).join('');
+        if (groups.size === 1 && !section) {
+          // Single group with no section name — no header needed
+          html += `<div class="today-grid">${cards}</div>`;
+        } else {
+          html += `
+            <div class="section-group">
+              <div class="section-header">${esc(section || 'General')}</div>
+              <div class="today-grid">${cards}</div>
+            </div>`;
+        }
       }
+
+      habitsWrap.innerHTML = html;
+      initDragAndDrop(habitsWrap);
     }
 
-    root.innerHTML = html;
-    initDragAndDrop(root);
+    // First-time render (or after a wipe from load()/error path): populate journal.
+    if (journalNew && window.renderJournal) window.renderJournal();
   }
 
   // ============================================================
@@ -685,6 +699,16 @@
         [`${completionRate(scope.id, 30)}<span class="stat-sub">%</span>`, '30-day rate'],
         [`${tickDates(scope.id).length}`, 'Total ticks'],
       ];
+    }
+    // Add journaling KPIs to the top row when viewing all habits.
+    if (!scope && window.journalScore) {
+      const j = window.journalScore;
+      const year = new Date().getFullYear();
+      tiles.push(
+        [`${j.streak()}<span class="stat-sub">d</span>`, 'Journal streak'],
+        [`${j.longest()}<span class="stat-sub">d</span>`, 'Longest journal'],
+        [`${j.yearCount(year)}`, `Entries ${year}`],
+      );
     }
     const overview = `<div class="stats-overview">${tiles.map(([v, l]) =>
       `<div class="stat-tile"><div class="num">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
@@ -1570,7 +1594,7 @@
       document.querySelectorAll('.view').forEach(s => s.classList.remove('active'));
       document.getElementById(`view-${v}`).classList.add('active');
 
-      const titles = { morning:'Morning', today:'Today', todo:'Todo', journal:'Journal', stats:'Stats' };
+      const titles = { morning:'Morning', today:'Today', todo:'Todo', stats:'Stats' };
       document.getElementById('page-title').textContent =
         v === 'morning' ? greeting() : (titles[v] || v);
 
@@ -1578,7 +1602,6 @@
       document.getElementById('fab').style.display = v === 'today' ? '' : 'none';
 
       if (v === 'morning') initMorningView();
-      if (v === 'journal' && window.renderJournal) window.renderJournal();
       renderProgress();
     });
   });
