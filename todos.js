@@ -3,6 +3,7 @@
 
   const CACHE_KEY = 'habits.todos.v1';        // last-known-good list, doubles as pre-Supabase migration source
   const QUEUE_KEY = 'habits.todos.queue.v1';  // writes that couldn't reach Supabase
+  const SEEN_KEY  = 'habits.todos.seen.v1';   // ids we've confirmed on the server (so deletes propagate)
   let todos        = [];
   let pendingLabel = null;
   let activeFilter = null;
@@ -16,6 +17,16 @@
     catch { todos = []; }
   }
   function saveCache() { localStorage.setItem(CACHE_KEY, JSON.stringify(todos)); }
+
+  // The set of ids we've seen on the server on a successful sync. Lets us tell a
+  // brand-new local item (never synced → push it up) apart from one that used to
+  // be on the server and has since been deleted on another device (→ drop it,
+  // instead of resurrecting it on every sync).
+  function loadSeen() {
+    try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); }
+    catch { return new Set(); }
+  }
+  function saveSeen(ids) { localStorage.setItem(SEEN_KEY, JSON.stringify([...ids])); }
 
   function queuePush(op) {
     const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
@@ -98,23 +109,31 @@
       // 1. Push any queued writes (offline mutations)
       await flushQueue();
 
-      // 2. Fetch remote state
-      const remote = (await window.db.listTodos() || []).map(fromRow);
+      // 2. Fetch remote state — this is authoritative for what still exists.
+      const seen      = loadSeen();
+      const remote    = (await window.db.listTodos() || []).map(fromRow);
       const remoteIds = new Set(remote.map(t => t.id));
+      saveSeen(remoteIds);
 
-      // 3. Upload local-only items (first-time migration from localStorage or offline creates
-      //    that never made it to the queue for whatever reason)
-      const localOnly = todos.filter(t => !remoteIds.has(t.id));
-      for (const t of localOnly) {
-        try { await window.db.addTodo(toRow(t)); remote.push(t); }
-        catch { /* stay in cache; next sync will retry */ }
+      // 3. Reconcile local-only items against the server.
+      const merged = remote.slice();
+      for (const t of todos) {
+        if (remoteIds.has(t.id)) continue;   // server has it — remote copy wins
+        if (seen.has(t.id)) continue;        // was on the server, deleted elsewhere — let it go
+        // Never seen on the server: a first-time migration from localStorage or
+        // an offline create. Push it up (queue on failure) and keep it locally.
+        try { await window.db.addTodo(toRow(t)); }
+        catch { queuePush({ op: 'add', payload: toRow(t) }); }
+        merged.push(t);
       }
 
-      todos = sortTodos(remote);
+      todos = sortTodos(merged);
       saveCache();
       render();
-    } catch {
-      // offline — keep cached state
+    } catch (err) {
+      // Offline, or the `todos` table/columns don't exist in Supabase yet
+      // (run schema.sql). Keep cached state, but surface why sync isn't working.
+      console.warn('[todos] sync failed — offline, or the todos table is missing in Supabase (run schema.sql):', err);
     }
   }
 
