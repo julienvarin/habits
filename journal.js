@@ -3,6 +3,7 @@
 
   const CACHE_KEY = 'habits.journal.v1';        // last-known-good entries, doubles as offline store
   const QUEUE_KEY = 'habits.journal.queue.v1';  // writes that couldn't reach Supabase
+  const SEEN_KEY  = 'habits.journal.seen.v1';   // dates we've confirmed on the server (so deletes propagate)
 
   // entries: date(YYYY-MM-DD) -> { date, day, learnt, updatedAt }
   const entries   = new Map();
@@ -35,6 +36,16 @@
   function saveCache() {
     localStorage.setItem(CACHE_KEY, JSON.stringify([...entries.values()]));
   }
+
+  // Dates we've confirmed on the server on a successful sync. Lets us tell a
+  // brand-new local day (never synced → push it up) apart from a day that used
+  // to be on the server and has since been cleared on another device (→ drop it,
+  // instead of resurrecting it on every sync).
+  function loadSeen() {
+    try { return new Set(JSON.parse(localStorage.getItem(SEEN_KEY) || '[]')); }
+    catch { return new Set(); }
+  }
+  function saveSeen(dates) { localStorage.setItem(SEEN_KEY, JSON.stringify([...dates])); }
 
   function queuePush(op) {
     const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
@@ -85,20 +96,25 @@
     try {
       await flushQueue();
 
+      const seen      = loadSeen();
       const remote    = (await window.db.listJournal() || []).map(fromRow);
       const remoteMap = new Map(remote.map(e => [e.date, e]));
+      saveSeen(new Set(remoteMap.keys()));  // snapshot the server's days before merging locals
 
       // Reconcile local vs remote per day.
       for (const local of [...entries.values()]) {
         const r = remoteMap.get(local.date);
         if (!r) {
-          // Local-only (offline create or first migration) — push it up.
-          try { await window.db.upsertJournal(toRow(local)); remoteMap.set(local.date, local); }
-          catch { /* keep local; next sync retries */ }
+          if (seen.has(local.date)) continue; // was on the server, cleared elsewhere — let it go
+          // Never seen on the server: offline create or first migration — push it up.
+          try { await window.db.upsertJournal(toRow(local)); }
+          catch { queuePush({ op: 'upsert', payload: toRow(local) }); }
+          remoteMap.set(local.date, local);
         } else if ((local.updatedAt || 0) > (r.updatedAt || 0)) {
           // Local is newer — push and win.
-          try { await window.db.upsertJournal(toRow(local)); remoteMap.set(local.date, local); }
-          catch { remoteMap.set(local.date, local); }
+          try { await window.db.upsertJournal(toRow(local)); }
+          catch { queuePush({ op: 'upsert', payload: toRow(local) }); }
+          remoteMap.set(local.date, local);
         }
         // else remote wins (already in remoteMap)
       }
@@ -108,8 +124,10 @@
       saveCache();
       render();
       window.renderStats?.();
-    } catch {
-      // offline — keep cached state
+    } catch (err) {
+      // Offline, or the `journal` table/columns don't exist in Supabase yet
+      // (run schema.sql). Keep cached state, but surface why sync isn't working.
+      console.warn('[journal] sync failed — offline, or the journal table is missing in Supabase (run schema.sql):', err);
     }
   }
 
