@@ -129,11 +129,12 @@
       for (const local of [...entries.values()]) {
         const r = remoteMap.get(local.date);
         if (!r) {
-          // Dirty → local write not yet on the server. Push (offline create,
-          // failed earlier write, or first-run migration of an old cache).
-          // Not dirty and previously seen on server → real deletion elsewhere,
-          // let it go. Not dirty and never seen → nothing to reconcile.
-          if (!dirty.has(local.date)) continue;
+          // Push if the server has never had this date (offline create, failed
+          // earlier write, or a legacy cache from before dirty tracking existed)
+          // OR if it's explicitly marked dirty this session. Skip only when
+          // we're confident the server had it and we haven't touched it since —
+          // that's a real remote deletion, let it drop locally.
+          if (seen.has(local.date) && !dirty.has(local.date)) continue;
           try { await window.db.upsertJournal(toRow(local)); clearDirty(local.date); }
           catch { queuePush({ op: 'upsert', payload: toRow(local) }); }
           remoteMap.set(local.date, local);
