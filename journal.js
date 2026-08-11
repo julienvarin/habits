@@ -4,6 +4,7 @@
   const CACHE_KEY = 'habits.journal.v1';        // last-known-good entries, doubles as offline store
   const QUEUE_KEY = 'habits.journal.queue.v1';  // writes that couldn't reach Supabase
   const SEEN_KEY  = 'habits.journal.seen.v1';   // dates we've confirmed on the server (so deletes propagate)
+  const DIRTY_KEY = 'habits.journal.dirty.v1';  // dates with local writes not yet confirmed on the server
 
   // entries: date(YYYY-MM-DD) -> { date, day, learnt, updatedAt }
   const entries   = new Map();
@@ -47,6 +48,28 @@
   }
   function saveSeen(dates) { localStorage.setItem(SEEN_KEY, JSON.stringify([...dates])); }
 
+  // "Dirty" = written locally but not yet confirmed on the server. persist()
+  // marks a date dirty; a successful upsert (in persist or sync) clears it.
+  // The sync push branch keys off this, not the absence-from-seen heuristic —
+  // otherwise an orphaned local (write that failed silently, e.g. because the
+  // journal table didn't exist yet) stays stuck on one device forever.
+  function loadDirty() {
+    try { return new Set(JSON.parse(localStorage.getItem(DIRTY_KEY) || '[]')); }
+    catch { return new Set(); }
+  }
+  function saveDirty(dates) { localStorage.setItem(DIRTY_KEY, JSON.stringify([...dates])); }
+  function markDirty(dstr)  { const d = loadDirty(); d.add(dstr); saveDirty(d); }
+  function clearDirty(dstr) { const d = loadDirty(); if (d.delete(dstr)) saveDirty(d); }
+
+  // One-time migration: dirty tracking is new, so on first run of this code
+  // treat every cached entry as unsynced. That way any pre-existing orphan
+  // (e.g. notes written before schema.sql was applied) gets pushed on the
+  // next sync instead of sitting on one device forever.
+  function migrateLegacyToDirty() {
+    if (localStorage.getItem(DIRTY_KEY) !== null) return;  // already migrated
+    saveDirty(new Set(entries.keys()));
+  }
+
   function queuePush(op) {
     const q = JSON.parse(localStorage.getItem(QUEUE_KEY) || '[]');
     q.push(op);
@@ -59,8 +82,8 @@
     const remaining = [];
     for (const op of q) {
       try {
-        if      (op.op === 'upsert') await window.db.upsertJournal(op.payload);
-        else if (op.op === 'delete') await window.db.deleteJournal(op.date);
+        if      (op.op === 'upsert') { await window.db.upsertJournal(op.payload); clearDirty(op.payload.date); }
+        else if (op.op === 'delete') { await window.db.deleteJournal(op.date);     clearDirty(op.date); }
       } catch { remaining.push(op); }
     }
     localStorage.setItem(QUEUE_KEY, JSON.stringify(remaining));
@@ -97,6 +120,7 @@
       await flushQueue();
 
       const seen      = loadSeen();
+      const dirty     = loadDirty();
       const remote    = (await window.db.listJournal() || []).map(fromRow);
       const remoteMap = new Map(remote.map(e => [e.date, e]));
       saveSeen(new Set(remoteMap.keys()));  // snapshot the server's days before merging locals
@@ -105,18 +129,23 @@
       for (const local of [...entries.values()]) {
         const r = remoteMap.get(local.date);
         if (!r) {
-          if (seen.has(local.date)) continue; // was on the server, cleared elsewhere — let it go
-          // Never seen on the server: offline create or first migration — push it up.
-          try { await window.db.upsertJournal(toRow(local)); }
+          // Dirty → local write not yet on the server. Push (offline create,
+          // failed earlier write, or first-run migration of an old cache).
+          // Not dirty and previously seen on server → real deletion elsewhere,
+          // let it go. Not dirty and never seen → nothing to reconcile.
+          if (!dirty.has(local.date)) continue;
+          try { await window.db.upsertJournal(toRow(local)); clearDirty(local.date); }
           catch { queuePush({ op: 'upsert', payload: toRow(local) }); }
           remoteMap.set(local.date, local);
         } else if ((local.updatedAt || 0) > (r.updatedAt || 0)) {
           // Local is newer — push and win.
-          try { await window.db.upsertJournal(toRow(local)); }
+          try { await window.db.upsertJournal(toRow(local)); clearDirty(local.date); }
           catch { queuePush({ op: 'upsert', payload: toRow(local) }); }
           remoteMap.set(local.date, local);
+        } else {
+          // Remote wins — local's copy is in sync with server, no push needed.
+          clearDirty(local.date);
         }
-        // else remote wins (already in remoteMap)
       }
 
       entries.clear();
@@ -259,8 +288,11 @@
       entries.delete(dstr);
       saveCache();
       setStatus('');
+      markDirty(dstr);
       if (window.db) {
-        window.db.deleteJournal(dstr).catch(() => queuePush({ op: 'delete', date: dstr }));
+        window.db.deleteJournal(dstr)
+          .then(() => clearDirty(dstr))
+          .catch(() => queuePush({ op: 'delete', date: dstr }));
       }
       window.renderStats?.();
       return;
@@ -269,9 +301,12 @@
     e.updatedAt = Date.now();
     saveCache();
     setStatus('Saved');
+    markDirty(dstr);
     const row = toRow(e);
     if (window.db) {
-      window.db.upsertJournal(row).catch(() => queuePush({ op: 'upsert', payload: row }));
+      window.db.upsertJournal(row)
+        .then(() => clearDirty(dstr))
+        .catch(() => queuePush({ op: 'upsert', payload: row }));
     }
     window.renderStats?.();
   }
@@ -425,12 +460,16 @@
   // ============================================================
   // Events
   // ============================================================
-  // Delegated click handler — must be re-attached on each render because
-  // #view-journal now lives inside #view-today and gets recreated whenever
-  // Today re-renders (e.g. after a habit tick).
+  // Delegated click handler. render() is called on every navigation and after
+  // every sync, but #view-journal itself is a stable node (recreated only when
+  // renderToday recreates its parent, in which case the fresh node has no
+  // data-attr). Guard with data-jr-click-wired so we don't stack N handlers on
+  // the same node — that stacking used to make one prev-click shift viewDate
+  // by N days instead of 1.
   function attachClickEvents() {
     const root = document.getElementById('view-journal');
-    if (!root) return;
+    if (!root || root.dataset.jrClickWired === '1') return;
+    root.dataset.jrClickWired = '1';
 
     root.addEventListener('click', e => {
       const nav = e.target.closest('[data-jaction]');
@@ -451,6 +490,7 @@
   // ============================================================
   function initJournal() {
     loadCache();
+    migrateLegacyToDirty();
     viewDate = todayStr();
     if (!eventsReady) {
       window.addEventListener('beforeunload', flushPending);
