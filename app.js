@@ -10,6 +10,7 @@
     view:    'today',
     loading: true,
     todayWeekOffset: 0,   // 0 = this week, +1 = last week, etc.
+    bigTaskDayOffset: 0,  // 0 = today, +1 = yesterday, etc.
   };
 
   const COLORS = [
@@ -264,23 +265,52 @@
       </div>`;
   }
 
-  // "One big task" tile — today's big task is whatever was written as
-  // "one thing to do tomorrow" in yesterday's journal entry.
+  // "One big task" tile — the big task on day D is whatever was written as
+  // "one thing to do tomorrow" in day D-1's journal entry. state.bigTaskDayOffset
+  // selects which day the tile shows (0 = today, +1 = yesterday, …).
+  function selectedBigTaskDate() {
+    return fmtDate(shiftDays(new Date(), -state.bigTaskDayOffset));
+  }
+  function bigTaskDayLabel(dstr) {
+    if (dstr === todayStr()) return 'Today';
+    const yStr = fmtDate(shiftDays(new Date(), -1));
+    if (dstr === yStr) return 'Yesterday';
+    return new Date(dstr + 'T00:00:00').toLocaleDateString(undefined,
+      { weekday: 'short', month: 'short', day: 'numeric' });
+  }
+  function buildBigTaskNav(dstr) {
+    const off = state.bigTaskDayOffset;
+    return `
+      <div class="bigtask-nav">
+        <button class="bigtask-nav-btn" data-action="bigtask-prev" aria-label="Previous day">‹</button>
+        <span class="bigtask-nav-label${off > 0 ? ' past' : ''}">${esc(bigTaskDayLabel(dstr))}</span>
+        <button class="bigtask-nav-btn" data-action="bigtask-next" aria-label="Next day" ${off === 0 ? 'disabled' : ''}>›</button>
+        ${off > 0 ? `<button class="bigtask-today-btn" data-action="bigtask-today">Today</button>` : ''}
+      </div>`;
+  }
   function buildBigTaskTile() {
     const jb = window.journalBig;
     if (!jb) return '';
-    const text = jb.todayText();
-    const done = jb.todayDone();
+    const dstr = selectedBigTaskDate();
+    const text = jb.textFor(dstr);
+    const done = jb.doneFor(dstr);
+    const nav  = buildBigTaskNav(dstr);
     if (!text) {
+      const isToday = state.bigTaskDayOffset === 0;
+      const msg = isToday
+        ? 'Set “one thing to do tomorrow” in your journal below — it shows up here tomorrow.'
+        : 'No big task set for this day.';
       return `
         <div class="bigtask-tile empty">
           <div class="bigtask-head"><span class="bigtask-icon">◎</span><span class="bigtask-label">One big task</span></div>
-          <p class="bigtask-empty">Set “one thing to do tomorrow” in your journal below — it shows up here tomorrow.</p>
+          ${nav}
+          <p class="bigtask-empty">${msg}</p>
         </div>`;
     }
     return `
       <div class="bigtask-tile ${done ? 'done' : ''}">
         <div class="bigtask-head"><span class="bigtask-icon">◎</span><span class="bigtask-label">One big task</span></div>
+        ${nav}
         <button class="bigtask-check ${done ? 'done' : ''}" data-action="toggle-bigtask"
                 aria-label="${done ? 'Mark big task not done' : 'Mark big task done'}">
           <span class="bigtask-box"></span>
@@ -1729,7 +1759,18 @@
       if (e.target.closest('[data-action="edit"]')) return;
       toggle(id, todayStr());
     } else if (action === 'toggle-bigtask') {
-      if (window.journalBig) { window.journalBig.toggleToday(); renderAll(); }
+      if (window.journalBig) {
+        window.journalBig.toggleFor(selectedBigTaskDate());
+        renderAll();
+      }
+    } else if (action === 'bigtask-prev') {
+      state.bigTaskDayOffset++;
+      renderToday();
+    } else if (action === 'bigtask-next') {
+      if (state.bigTaskDayOffset > 0) { state.bigTaskDayOffset--; renderToday(); }
+    } else if (action === 'bigtask-today') {
+      state.bigTaskDayOffset = 0;
+      renderToday();
     } else if (action === 'edit') {
       e.stopPropagation();
       openModal(state.habits.find(h => h.id === id));
@@ -1752,7 +1793,10 @@
     btn.addEventListener('click', () => {
       const v = btn.dataset.view;
       if (state.view === v) return;
-      if (state.view === 'today' && v !== 'today') state.todayWeekOffset = 0;
+      if (state.view === 'today' && v !== 'today') {
+        state.todayWeekOffset = 0;
+        state.bigTaskDayOffset = 0;
+      }
       state.view = v;
 
       document.querySelectorAll('.tab').forEach(t => {
