@@ -35,10 +35,16 @@ create table if not exists todos (
   id text primary key,
   text text not null,
   label text,
+  -- 'todo' = a task; 'list' = an item on a freeform tickable list
+  -- (movies to watch, books to read, things to buy…), with `label` as the list name.
+  kind text not null default 'todo',
   done boolean not null default false,
   created_at bigint not null,
   done_at bigint
 );
+
+-- Migration: add kind column if the todos table already exists.
+alter table todos add column if not exists kind text not null default 'todo';
 
 create index if not exists todos_done_created_idx on todos(done, created_at desc);
 
