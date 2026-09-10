@@ -944,14 +944,15 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 .td-lbl-picks { display: flex; flex-wrap: wrap; gap: 6px; }
 .td-lp {
   font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 99px;
-  background: color-mix(in srgb, var(--lc, #34c759) 12%, var(--bg-inset));
-  border: 1.5px solid color-mix(in srgb, var(--lc, #34c759) 30%, transparent);
-  color: var(--lc, #34c759); transition: background 0.12s, border-color 0.12s, transform 0.08s;
+  background: var(--bg-inset); border: 1.5px solid var(--border); color: var(--fg-dim);
+  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.08s;
 }
 .td-lp:active { transform: scale(0.94); }
-.td-lp.on { background: var(--lc, #34c759); border-color: transparent; color: #fff; }
+.td-lp.on { background: var(--fg); border-color: transparent; color: var(--bg-card); }
 .td-new-lbl {
-  font-size: 12px; color: var(--fg-dim); padding: 4px 8px;
+  width: 28px; height: 28px; flex-shrink: 0;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-size: 17px; line-height: 1; color: var(--fg-dim);
   border-radius: 99px; border: 1.5px dashed var(--border-hi);
   transition: color 0.12s, border-color 0.12s;
 }
@@ -962,7 +963,7 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
   background: var(--bg-card); border: 1px solid var(--border);
   border-radius: 99px; padding: 3px 10px;
 }
-.td-lbl-tag { font-size: 12px; font-weight: 700; color: var(--lc, #34c759); }
+.td-lbl-tag { font-size: 12px; font-weight: 700; color: var(--fg); }
 .td-lbl-clr {
   font-size: 12px; color: var(--fg-dim);
   width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;
@@ -977,8 +978,7 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
   transition: background 0.12s, border-color 0.12s, color 0.12s;
 }
 .td-f:hover { color: var(--fg-2); border-color: var(--border-hi); }
-.td-f.on { background: var(--lc, var(--fg)); border-color: transparent; color: #fff; }
-.td-f:first-child.on { background: var(--fg); color: var(--bg-card); }
+.td-f.on { background: var(--fg); border-color: transparent; color: var(--bg-card); }
 
 .td-list { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
 .td-item {
@@ -1009,8 +1009,8 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 .td-item.done .td-txt { text-decoration: line-through; color: var(--fg-dim); }
 
 .td-tag {
-  font-size: 11px; font-weight: 700; color: var(--lc, #007aff);
-  background: color-mix(in srgb, var(--lc, #007aff) 12%, transparent);
+  font-size: 11px; font-weight: 700; color: var(--fg-dim);
+  background: var(--bg-inset);
   border-radius: 5px; padding: 2px 7px; white-space: nowrap; flex-shrink: 0;
 }
 
