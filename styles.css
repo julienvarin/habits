@@ -894,6 +894,21 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 /* ============================================================
    TODO TAB
 ============================================================ */
+/* Todos / Lists mode toggle */
+.td-seg {
+  display: flex; gap: 4px; margin-bottom: 14px; padding: 4px;
+  background: var(--bg-inset); border: 1px solid var(--border);
+  border-radius: var(--radius); position: relative; z-index: 3;
+}
+.td-seg-btn {
+  flex: 1; padding: 9px 12px; border-radius: calc(var(--radius) - 5px);
+  font-size: 14px; font-weight: 600; color: var(--fg-dim);
+  transition: background 0.15s, color 0.15s, box-shadow 0.15s;
+}
+.td-seg-btn.on {
+  background: var(--bg-card); color: var(--fg); box-shadow: var(--shadow-sm);
+}
+
 .td-add-wrap {
   position: sticky; top: 0; z-index: 4;
   background: rgba(245,245,247,0.93);

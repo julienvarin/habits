@@ -4,10 +4,17 @@
   const CACHE_KEY = 'habits.todos.v1';        // last-known-good list, doubles as pre-Supabase migration source
   const QUEUE_KEY = 'habits.todos.queue.v1';  // writes that couldn't reach Supabase
   const SEEN_KEY  = 'habits.todos.seen.v1';   // ids we've confirmed on the server (so deletes propagate)
+  const MODE_KEY  = 'habits.todos.mode.v1';   // remembers the Todos/Lists toggle + active list
   let todos        = [];
   let pendingLabel = null;
   let activeFilter = null;
   let eventsReady  = false;
+  // Two modes share this view: 'todos' (tasks) and 'lists' (freeform tickable
+  // lists — movies to watch, books to read, things to buy…). Rows carry a
+  // `kind` of 'todo' or 'list' to keep them apart. In lists mode the row's
+  // `label` holds the list name and `activeList` is the one being viewed/added to.
+  let viewMode   = 'todos';
+  let activeList = null;
 
   // ============================================================
   // Storage (local cache + offline write queue)
@@ -61,8 +68,32 @@
 
   function allLabels() {
     const seen = new Set();
-    for (const t of todos) if (t.label) seen.add(t.label);
+    for (const t of todos) if (t.kind !== 'list' && t.label) seen.add(t.label);
     return [...seen].sort();
+  }
+
+  // Distinct list names among list-kind items.
+  function allLists() {
+    const seen = new Set();
+    for (const t of todos) if (t.kind === 'list' && t.label) seen.add(t.label);
+    return [...seen].sort();
+  }
+
+  // The item scope the "Clear completed" button acts on for the current mode.
+  function inCurrentScope(t) {
+    if (viewMode === 'lists') return t.kind === 'list' && t.label === activeList;
+    return t.kind !== 'list';
+  }
+
+  function loadMode() {
+    try {
+      const m = JSON.parse(localStorage.getItem(MODE_KEY) || '{}');
+      viewMode   = m.viewMode === 'lists' ? 'lists' : 'todos';
+      activeList = m.activeList || null;
+    } catch { viewMode = 'todos'; activeList = null; }
+  }
+  function saveMode() {
+    localStorage.setItem(MODE_KEY, JSON.stringify({ viewMode, activeList }));
   }
 
   // Deterministic color from label name
@@ -84,6 +115,7 @@
       id: t.id,
       text: t.text,
       label: t.label,
+      kind: t.kind === 'list' ? 'list' : 'todo',
       done: !!t.done,
       created_at: t.createdAt,
       done_at: t.doneAt || null,
@@ -94,6 +126,7 @@
       id: r.id,
       text: r.text,
       label: r.label,
+      kind: r.kind === 'list' ? 'list' : 'todo',
       done: !!r.done,
       createdAt: r.created_at,
       doneAt: r.done_at,
@@ -141,19 +174,27 @@
   // Actions (optimistic + queue on failure)
   // ============================================================
   function addTodo(raw) {
-    let text  = (raw || '').trim();
-    let label = pendingLabel;
+    let text = (raw || '').trim();
     if (!text) return;
 
-    // Extract trailing #label written inline
-    const m = text.match(/\s#(\S+)\s*$/);
-    if (m) {
-      label = m[1];
-      text  = text.slice(0, m.index).trim();
+    let label, kind;
+    if (viewMode === 'lists') {
+      if (!activeList) return;   // nothing to add to until a list is picked/created
+      kind  = 'list';
+      label = activeList;
+    } else {
+      kind  = 'todo';
+      label = pendingLabel;
+      // Extract trailing #label written inline
+      const m = text.match(/\s#(\S+)\s*$/);
+      if (m) {
+        label = m[1];
+        text  = text.slice(0, m.index).trim();
+      }
+      if (!text) return;
     }
-    if (!text) return;
 
-    const todo = { id: uid(), text, label: label || null, done: false, createdAt: Date.now() };
+    const todo = { id: uid(), text, label: label || null, kind, done: false, createdAt: Date.now() };
     todos.unshift(todo);
     saveCache();
     pendingLabel = null;
@@ -192,8 +233,9 @@
   }
 
   function clearDone() {
-    const doneIds = todos.filter(x => x.done).map(x => x.id);
-    todos = todos.filter(x => !x.done);
+    const doneIds = todos.filter(x => x.done && inCurrentScope(x)).map(x => x.id);
+    const drop    = new Set(doneIds);
+    todos = todos.filter(x => !drop.has(x.id));
     saveCache();
     render();
 
@@ -210,6 +252,25 @@
     document.getElementById('todo-input')?.focus();
   }
 
+  function setMode(mode) {
+    if (mode !== 'todos' && mode !== 'lists') return;
+    if (mode === viewMode) return;
+    viewMode = mode;
+    if (viewMode === 'lists' && !activeList) {
+      const lists = allLists();
+      if (lists.length) activeList = lists[0];
+    }
+    saveMode();
+    render();
+  }
+
+  function setActiveList(name) {
+    activeList = name || null;
+    saveMode();
+    render();
+    document.getElementById('todo-input')?.focus();
+  }
+
   // ============================================================
   // Render
   // ============================================================
@@ -217,8 +278,26 @@
     const root = document.getElementById('view-todo');
     if (!root) return;
 
+    const seg = `
+      <div class="td-seg" role="tablist" aria-label="Todo mode">
+        <button class="td-seg-btn ${viewMode === 'todos' ? 'on' : ''}" data-tmode="todos"
+                role="tab" aria-selected="${viewMode === 'todos'}">Todos</button>
+        <button class="td-seg-btn ${viewMode === 'lists' ? 'on' : ''}" data-tmode="lists"
+                role="tab" aria-selected="${viewMode === 'lists'}">Lists</button>
+      </div>`;
+
+    root.innerHTML = seg + (viewMode === 'lists' ? listsBody() : todosBody());
+
+    // Re-attach input keydown after innerHTML swap
+    document.getElementById('todo-input')?.addEventListener('keydown', e => {
+      if (e.key === 'Enter') addTodo(e.target.value);
+    });
+  }
+
+  // ---- Todos mode ----
+  function todosBody() {
     const labels  = allLabels();
-    const visible = todos.filter(t => !activeFilter || t.label === activeFilter);
+    const visible = todos.filter(t => t.kind !== 'list' && (!activeFilter || t.label === activeFilter));
     const pending = visible.filter(t => !t.done);
     const done    = visible.filter(t =>  t.done);
 
@@ -232,22 +311,13 @@
         ).join('')}
       </div>` : '';
 
-    // Pending list
     const pendingHtml = pending.length
       ? pending.map(rowHtml).join('')
       : `<div class="td-zero">${
           activeFilter ? `No open todos in #${esc(activeFilter)}` : 'Nothing here yet — add something above!'
         }</div>`;
 
-    // Done section
-    const doneSection = done.length ? `
-      <details class="td-done-details">
-        <summary class="td-done-sum">Done <span class="td-done-ct">${done.length}</span></summary>
-        <div class="td-done-list">
-          ${done.map(rowHtml).join('')}
-          <button class="td-clear-btn" data-taction="clear-done">Clear completed</button>
-        </div>
-      </details>` : '';
+    const doneSection = doneSectionHtml(done);
 
     // Label picks + pending indicator
     const picksHtml = labels.map(l =>
@@ -261,7 +331,7 @@
           <button class="td-lbl-clr" data-taction="clear-label">✕</button>
         </div>` : '';
 
-    root.innerHTML = `
+    return `
       <div class="td-add-wrap">
         <div class="td-add-row">
           <input id="todo-input" class="td-input" type="text"
@@ -276,15 +346,76 @@
       ${filterBar}
       <div class="td-list">${pendingHtml}</div>
       ${doneSection}`;
+  }
 
-    // Re-attach input keydown after innerHTML swap
-    document.getElementById('todo-input')?.addEventListener('keydown', e => {
-      if (e.key === 'Enter') addTodo(e.target.value);
-    });
+  // ---- Lists mode ----
+  function listsBody() {
+    const real = allLists();
+    if (activeList && !real.includes(activeList)) {
+      // freshly created but still empty — keep it selectable until an item lands
+    } else if (!activeList && real.length) {
+      activeList = real[0];
+    }
+
+    // Chips: every real list, plus a just-created empty one so it stays visible.
+    const set = new Set(real);
+    if (activeList) set.add(activeList);
+    const lists = [...set].sort();
+
+    const chips = `
+      <div class="td-filter-bar td-list-bar">
+        ${lists.map(l =>
+          `<button class="td-f ${activeList === l ? 'on' : ''}"
+                  data-tlist="${esc(l)}" style="--lc:${lcolor(l)}">${esc(l)}</button>`
+        ).join('')}
+        <button class="td-new-lbl" data-taction="new-list">+ list</button>
+      </div>`;
+
+    // No lists at all yet.
+    if (!lists.length) {
+      return `
+        ${chips}
+        <div class="td-zero">
+          Keep lists of things to watch, read, or buy.<br>
+          Tap <strong>+ list</strong> to start one.
+        </div>`;
+    }
+
+    const items   = todos.filter(t => t.kind === 'list' && t.label === activeList);
+    const pending = items.filter(t => !t.done);
+    const done    = items.filter(t =>  t.done);
+
+    const pendingHtml = pending.length
+      ? pending.map(rowHtml).join('')
+      : `<div class="td-zero">Nothing in ${esc(activeList)} yet — add something above!</div>`;
+
+    return `
+      <div class="td-add-wrap">
+        <div class="td-add-row">
+          <input id="todo-input" class="td-input" type="text"
+                 placeholder="Add to ${esc(activeList)}…" maxlength="200" autocomplete="off" spellcheck="true" />
+          <button class="td-add-btn" data-taction="add" aria-label="Add item">+</button>
+        </div>
+      </div>
+      ${chips}
+      <div class="td-list">${pendingHtml}</div>
+      ${doneSectionHtml(done)}`;
+  }
+
+  function doneSectionHtml(done) {
+    return done.length ? `
+      <details class="td-done-details">
+        <summary class="td-done-sum">Done <span class="td-done-ct">${done.length}</span></summary>
+        <div class="td-done-list">
+          ${done.map(rowHtml).join('')}
+          <button class="td-clear-btn" data-taction="clear-done">Clear completed</button>
+        </div>
+      </details>` : '';
   }
 
   function rowHtml(t) {
-    const lbl = t.label
+    // List items are grouped under a selected list already, so no per-row tag there.
+    const lbl = (t.kind !== 'list' && t.label)
       ? `<span class="td-tag" style="--lc:${lcolor(t.label)}">${esc(t.label)}</span>`
       : '';
     return `
@@ -346,6 +477,20 @@
         else     document.getElementById('todo-input')?.focus();
         return;
       }
+      if (action === 'new-list') {
+        const name = prompt('List name (e.g. Movies, Books, Buy):')?.trim();
+        if (name) setActiveList(name);
+        else      document.getElementById('todo-input')?.focus();
+        return;
+      }
+
+      // Mode toggle (Todos / Lists)
+      const mEl = e.target.closest('[data-tmode]');
+      if (mEl) { setMode(mEl.dataset.tmode); return; }
+
+      // List selector (lists mode)
+      const lEl = e.target.closest('[data-tlist]');
+      if (lEl) { setActiveList(lEl.dataset.tlist); return; }
 
       // Filter bar
       const fEl = e.target.closest('[data-tfilter]');
@@ -365,6 +510,7 @@
   // Init
   // ============================================================
   function initTodo() {
+    loadMode();
     loadCache();
     render();                                    // paint from cache immediately
     if (!eventsReady) { attachEvents(); eventsReady = true; }
