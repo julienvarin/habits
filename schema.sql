@@ -35,16 +35,24 @@ create table if not exists todos (
   id text primary key,
   text text not null,
   label text,
-  -- 'todo' = a task; 'list' = an item on a freeform tickable list
-  -- (movies to watch, books to read, things to buy…), with `label` as the list name.
+  -- 'todo'   = a task
+  -- 'list'   = an item on a freeform tickable list (movies to watch, books to
+  --            read, things to buy…), with `label` as the list name.
+  -- 'stress' = a task placed on the stress board; stress_x / stress_y (0..1)
+  --            hold its position (x = complexity, y = stress).
   kind text not null default 'todo',
   done boolean not null default false,
   created_at bigint not null,
-  done_at bigint
+  done_at bigint,
+  stress_x double precision,
+  stress_y double precision
 );
 
 -- Migration: add kind column if the todos table already exists.
 alter table todos add column if not exists kind text not null default 'todo';
+-- Migration: stress-board coordinates (x = complexity, y = stress; both 0..1).
+alter table todos add column if not exists stress_x double precision;
+alter table todos add column if not exists stress_y double precision;
 
 create index if not exists todos_done_created_idx on todos(done, created_at desc);
 
