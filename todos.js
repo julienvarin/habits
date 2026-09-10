@@ -6,13 +6,17 @@
   const SEEN_KEY  = 'habits.todos.seen.v1';   // ids we've confirmed on the server (so deletes propagate)
   const MODE_KEY  = 'habits.todos.mode.v1';   // remembers the Todos/Lists toggle + active list
   let todos        = [];
-  let pendingLabel = null;
   let activeFilter = null;
   let eventsReady  = false;
-  // Two modes share this view: 'todos' (tasks) and 'lists' (freeform tickable
-  // lists — movies to watch, books to read, things to buy…). Rows carry a
-  // `kind` of 'todo' or 'list' to keep them apart. In lists mode the row's
-  // `label` holds the list name and `activeList` is the one being viewed/added to.
+  // Three modes share this view, told apart by each row's `kind`:
+  //   'todos'  — tasks (kind 'todo'). `activeFilter` is the single tappable
+  //              label chip: it filters the list AND files new todos under it.
+  //   'lists'  — freeform tickable lists (kind 'list' — movies, books, buy…),
+  //              where the row's `label` is the list name and `activeList` the
+  //              one being viewed/added to.
+  //   'stress' — a stress board (kind 'stress'): tasks are chips dragged on a
+  //              2-D board, X = complexity, Y = stress. `sx`/`sy` (0..1) hold
+  //              each chip's position.
   let viewMode   = 'todos';
   let activeList = null;
 
@@ -68,7 +72,7 @@
 
   function allLabels() {
     const seen = new Set();
-    for (const t of todos) if (t.kind !== 'list' && t.label) seen.add(t.label);
+    for (const t of todos) if (t.kind === 'todo' && t.label) seen.add(t.label);
     return [...seen].sort();
   }
 
@@ -81,14 +85,15 @@
 
   // The item scope the "Clear completed" button acts on for the current mode.
   function inCurrentScope(t) {
-    if (viewMode === 'lists') return t.kind === 'list' && t.label === activeList;
-    return t.kind !== 'list';
+    if (viewMode === 'lists')  return t.kind === 'list' && t.label === activeList;
+    if (viewMode === 'stress') return t.kind === 'stress';
+    return t.kind === 'todo';
   }
 
   function loadMode() {
     try {
       const m = JSON.parse(localStorage.getItem(MODE_KEY) || '{}');
-      viewMode   = m.viewMode === 'lists' ? 'lists' : 'todos';
+      viewMode   = ['todos', 'lists', 'stress'].includes(m.viewMode) ? m.viewMode : 'todos';
       activeList = m.activeList || null;
     } catch { viewMode = 'todos'; activeList = null; }
   }
@@ -105,10 +110,12 @@
       id: t.id,
       text: t.text,
       label: t.label,
-      kind: t.kind === 'list' ? 'list' : 'todo',
+      kind: (t.kind === 'list' || t.kind === 'stress') ? t.kind : 'todo',
       done: !!t.done,
       created_at: t.createdAt,
       done_at: t.doneAt || null,
+      stress_x: (typeof t.sx === 'number') ? t.sx : null,
+      stress_y: (typeof t.sy === 'number') ? t.sy : null,
     };
   }
   function fromRow(r) {
@@ -116,10 +123,12 @@
       id: r.id,
       text: r.text,
       label: r.label,
-      kind: r.kind === 'list' ? 'list' : 'todo',
+      kind: (r.kind === 'list' || r.kind === 'stress') ? r.kind : 'todo',
       done: !!r.done,
       createdAt: r.created_at,
       doneAt: r.done_at,
+      sx: (typeof r.stress_x === 'number') ? r.stress_x : undefined,
+      sy: (typeof r.stress_y === 'number') ? r.stress_y : undefined,
     };
   }
 
@@ -172,9 +181,13 @@
       if (!activeList) return;   // nothing to add to until a list is picked/created
       kind  = 'list';
       label = activeList;
+    } else if (viewMode === 'stress') {
+      kind  = 'stress';
+      label = null;
     } else {
       kind  = 'todo';
-      label = pendingLabel;
+      // The active label chip is where new todos land (like the active list).
+      label = activeFilter;
       // Extract trailing #label written inline
       const m = text.match(/\s#(\S+)\s*$/);
       if (m) {
@@ -185,9 +198,14 @@
     }
 
     const todo = { id: uid(), text, label: label || null, kind, done: false, createdAt: Date.now() };
+    if (kind === 'stress') {
+      // Drop new tasks near the calm/simple corner with a little jitter so they
+      // don't stack, then let the user drag them into place.
+      todo.sx = 0.12 + Math.random() * 0.12;
+      todo.sy = 0.12 + Math.random() * 0.12;
+    }
     todos.unshift(todo);
     saveCache();
-    pendingLabel = null;
     render();
 
     const inp = document.getElementById('todo-input');
@@ -236,14 +254,15 @@
     }
   }
 
-  function setPendingLabel(lbl) {
-    pendingLabel = lbl || null;
-    updateLabelRow();
-    document.getElementById('todo-input')?.focus();
+  // Persist a stress chip's new board position (optimistic + queue on failure).
+  function persistStress(t) {
+    if (!window.db) return;
+    const patch = { stress_x: t.sx, stress_y: t.sy };
+    window.db.updateTodo(t.id, patch).catch(() => queuePush({ op: 'update', id: t.id, patch }));
   }
 
   function setMode(mode) {
-    if (mode !== 'todos' && mode !== 'lists') return;
+    if (!['todos', 'lists', 'stress'].includes(mode)) return;
     if (mode === viewMode) return;
     viewMode = mode;
     if (viewMode === 'lists' && !activeList) {
@@ -268,15 +287,18 @@
     const root = document.getElementById('view-todo');
     if (!root) return;
 
+    const segBtn = (mode, txt) =>
+      `<button class="td-seg-btn ${viewMode === mode ? 'on' : ''}" data-tmode="${mode}"
+               role="tab" aria-selected="${viewMode === mode}">${txt}</button>`;
     const seg = `
       <div class="td-seg" role="tablist" aria-label="Todo mode">
-        <button class="td-seg-btn ${viewMode === 'todos' ? 'on' : ''}" data-tmode="todos"
-                role="tab" aria-selected="${viewMode === 'todos'}">Todos</button>
-        <button class="td-seg-btn ${viewMode === 'lists' ? 'on' : ''}" data-tmode="lists"
-                role="tab" aria-selected="${viewMode === 'lists'}">Lists</button>
+        ${segBtn('todos', 'Todos')}${segBtn('lists', 'Lists')}${segBtn('stress', 'Stress')}
       </div>`;
 
-    root.innerHTML = seg + (viewMode === 'lists' ? listsBody() : todosBody());
+    const body = viewMode === 'lists'  ? listsBody()
+               : viewMode === 'stress' ? stressBody()
+               : todosBody();
+    root.innerHTML = seg + body;
 
     // Re-attach input keydown after innerHTML swap
     document.getElementById('todo-input')?.addEventListener('keydown', e => {
@@ -286,20 +308,26 @@
 
   // ---- Todos mode ----
   function todosBody() {
-    const labels  = allLabels();
-    const visible = todos.filter(t => t.kind !== 'list' && (!activeFilter || t.label === activeFilter));
+    // One tappable set of label chips (like Lists): the active chip both filters
+    // the list and is where new todos land. Keep the active label visible even
+    // when it has no todos yet, so a freshly-picked label doesn't vanish.
+    const labelSet = new Set(allLabels());
+    if (activeFilter) labelSet.add(activeFilter);
+    const labels = [...labelSet].sort();
+
+    const visible = todos.filter(t => t.kind === 'todo' && (!activeFilter || t.label === activeFilter));
     const pending = visible.filter(t => !t.done);
     const done    = visible.filter(t =>  t.done);
 
-    // Label filter bar
-    const filterBar = labels.length ? `
+    const chips = `
       <div class="td-filter-bar">
         <button class="td-f ${!activeFilter ? 'on' : ''}" data-tfilter="">All</button>
         ${labels.map(l =>
           `<button class="td-f ${activeFilter === l ? 'on' : ''}"
                   data-tfilter="${esc(l)}">${esc(l)}</button>`
         ).join('')}
-      </div>` : '';
+        <button class="td-new-lbl" data-taction="new-label" aria-label="New label">+</button>
+      </div>`;
 
     const pendingHtml = pending.length
       ? pending.map(rowHtml).join('')
@@ -307,36 +335,69 @@
           activeFilter ? `No open todos in ${esc(activeFilter)}` : 'Nothing here yet — add something above!'
         }</div>`;
 
-    const doneSection = doneSectionHtml(done);
-
-    // Label picks + pending indicator
-    const picksHtml = labels.map(l =>
-      `<button class="td-lp ${pendingLabel === l ? 'on' : ''}"
-              data-tsetlbl="${esc(l)}">${esc(l)}</button>`
-    ).join('') + `<button class="td-new-lbl" data-taction="new-label" aria-label="New label">+</button>`;
-
-    const pendingLblHtml = pendingLabel
-      ? `<div class="td-active-lbl">
-          <span class="td-lbl-tag">${esc(pendingLabel)}</span>
-          <button class="td-lbl-clr" data-taction="clear-label">✕</button>
-        </div>` : '';
+    const ph = activeFilter ? `Add to ${esc(activeFilter)}…` : 'Add a todo…';
 
     return `
       <div class="td-add-wrap">
         <div class="td-add-row">
           <input id="todo-input" class="td-input" type="text"
-                 placeholder="Add a todo…" maxlength="200" autocomplete="off" spellcheck="true" />
+                 placeholder="${ph}" maxlength="200" autocomplete="off" spellcheck="true" />
           <button class="td-add-btn" data-taction="add" aria-label="Add todo">+</button>
         </div>
-        <div class="td-lbl-row" id="td-lbl-row">
-          <div class="td-lbl-picks" id="td-lbl-picks">${picksHtml}</div>
-          ${pendingLblHtml}
+      </div>
+      ${chips}
+      <div class="td-list">${pendingHtml}</div>
+      ${doneSectionHtml(done)}`;
+  }
+
+  // ---- Stress mode ----
+  // A 2-D board: X = complexity (simple → complex), Y = stress (calm → stressful).
+  // Tasks are chips you drag with a finger to where they sit; position persists.
+  function stressBody() {
+    const items = todos.filter(t => t.kind === 'stress' && !t.done);
+
+    const chipsHtml = items.map(stressChipHtml).join('');
+    const hint = items.length ? '' : `
+      <div class="td-stress-hint">
+        Add a task above, then drag it:<br>
+        right = more complex, up = more stressful.
+      </div>`;
+
+    return `
+      <div class="td-add-wrap">
+        <div class="td-add-row">
+          <input id="todo-input" class="td-input" type="text"
+                 placeholder="Add a task to place…" maxlength="200" autocomplete="off" spellcheck="true" />
+          <button class="td-add-btn" data-taction="add" aria-label="Add task">+</button>
         </div>
       </div>
-      ${filterBar}
-      <div class="td-list">${pendingHtml}</div>
-      ${doneSection}`;
+      <div class="td-stress-wrap">
+        <div class="td-axis-y">Stress ↑</div>
+        <div class="td-stress-board">
+          ${chipsHtml}
+          ${hint}
+        </div>
+        <div class="td-axis-x">Complexity →</div>
+      </div>`;
   }
+
+  function stressChipHtml(t) {
+    const sx = clamp01(typeof t.sx === 'number' ? t.sx : 0.15);
+    const sy = clamp01(typeof t.sy === 'number' ? t.sy : 0.15);
+    // Combined "load" drives the colour: calm+simple → green, stressful+complex → red.
+    const hue = Math.round(140 * (1 - (sx + sy) / 2));
+    const left = (sx * 100).toFixed(2);
+    const top  = ((1 - sy) * 100).toFixed(2);   // top of the board is high stress
+    return `
+      <div class="td-stress-chip" data-id="${t.id}"
+           style="left:${left}%; top:${top}%; --hue:${hue}">
+        <span class="td-stress-txt">${esc(t.text)}</span>
+        <button class="td-stress-x" data-taction="delete" data-id="${t.id}"
+                aria-label="Done / remove">×</button>
+      </div>`;
+  }
+
+  function clamp01(n) { return Math.max(0, Math.min(1, n)); }
 
   // ---- Lists mode ----
   function listsBody() {
@@ -405,7 +466,7 @@
 
   function rowHtml(t) {
     // List items are grouped under a selected list already, so no per-row tag there.
-    const lbl = (t.kind !== 'list' && t.label)
+    const lbl = (t.kind === 'todo' && t.label)
       ? `<span class="td-tag">${esc(t.label)}</span>`
       : '';
     return `
@@ -416,28 +477,6 @@
         ${lbl}
         <button class="td-x" data-taction="delete" data-id="${t.id}" aria-label="Delete">×</button>
       </div>`;
-  }
-
-  // Partial update of label row (preserves input focus)
-  function updateLabelRow() {
-    const picks = document.getElementById('td-lbl-picks');
-    const row   = document.getElementById('td-lbl-row');
-    if (!picks || !row) return;
-
-    const labels = allLabels();
-    picks.innerHTML = labels.map(l =>
-      `<button class="td-lp ${pendingLabel === l ? 'on' : ''}"
-              data-tsetlbl="${esc(l)}">${esc(l)}</button>`
-    ).join('') + `<button class="td-new-lbl" data-taction="new-label" aria-label="New label">+</button>`;
-
-    let plEl = row.querySelector('.td-active-lbl');
-    if (pendingLabel) {
-      if (!plEl) { plEl = document.createElement('div'); plEl.className = 'td-active-lbl'; row.appendChild(plEl); }
-      plEl.innerHTML = `<span class="td-lbl-tag">${esc(pendingLabel)}</span>
-        <button class="td-lbl-clr" data-taction="clear-label">✕</button>`;
-    } else if (plEl) {
-      plEl.remove();
-    }
   }
 
   // ============================================================
@@ -455,7 +494,6 @@
       if (action === 'toggle')      { toggleItem(id); return; }
       if (action === 'delete')      { deleteItem(id); return; }
       if (action === 'clear-done')  { clearDone();    return; }
-      if (action === 'clear-label') { setPendingLabel(null); return; }
       if (action === 'add') {
         const inp = document.getElementById('todo-input');
         if (inp) addTodo(inp.value);
@@ -463,8 +501,8 @@
       }
       if (action === 'new-label') {
         const lbl = prompt('Label name (e.g. work, health, errands):')?.trim();
-        if (lbl) setPendingLabel(lbl);
-        else     document.getElementById('todo-input')?.focus();
+        if (lbl) { activeFilter = lbl; render(); }   // becomes the active chip
+        document.getElementById('todo-input')?.focus();
         return;
       }
       if (action === 'new-list') {
@@ -474,7 +512,7 @@
         return;
       }
 
-      // Mode toggle (Todos / Lists)
+      // Mode toggle (Todos / Lists / Stress)
       const mEl = e.target.closest('[data-tmode]');
       if (mEl) { setMode(mEl.dataset.tmode); return; }
 
@@ -482,18 +520,59 @@
       const lEl = e.target.closest('[data-tlist]');
       if (lEl) { setActiveList(lEl.dataset.tlist); return; }
 
-      // Filter bar
+      // Filter bar (also picks the label new todos land under)
       const fEl = e.target.closest('[data-tfilter]');
       if (fEl) { activeFilter = fEl.dataset.tfilter || null; render(); return; }
-
-      // Label pick
-      const lpEl = e.target.closest('[data-tsetlbl]');
-      if (lpEl) {
-        const lbl = lpEl.dataset.tsetlbl;
-        setPendingLabel(pendingLabel === lbl ? null : lbl);
-        return;
-      }
     });
+
+    attachStressDrag(root);
+  }
+
+  // ============================================================
+  // Stress board drag (pointer events — works with touch + mouse)
+  // ============================================================
+  function attachStressDrag(root) {
+    let dragEl = null, item = null, board = null, moved = false;
+
+    root.addEventListener('pointerdown', e => {
+      if (viewMode !== 'stress') return;
+      const chip = e.target.closest('.td-stress-chip');
+      if (!chip) return;
+      if (e.target.closest('[data-taction]')) return;   // let the × delete
+      board = root.querySelector('.td-stress-board');
+      if (!board) return;
+      item = todos.find(t => t.id === chip.dataset.id);
+      if (!item) return;
+      dragEl = chip;
+      moved  = false;
+      chip.classList.add('dragging');
+      try { chip.setPointerCapture(e.pointerId); } catch {}
+      e.preventDefault();
+    });
+
+    root.addEventListener('pointermove', e => {
+      if (!dragEl) return;
+      const r  = board.getBoundingClientRect();
+      const fx = clamp01((e.clientX - r.left) / r.width);
+      const fy = clamp01((e.clientY - r.top)  / r.height);
+      // Keep a small margin so chips stay readable at the edges.
+      item.sx = Math.max(0.04, Math.min(0.96, fx));
+      item.sy = Math.max(0.04, Math.min(0.96, 1 - fy));   // top = high stress
+      moved = true;
+      dragEl.style.left = (item.sx * 100).toFixed(2) + '%';
+      dragEl.style.top  = ((1 - item.sy) * 100).toFixed(2) + '%';
+      dragEl.style.setProperty('--hue', String(Math.round(140 * (1 - (item.sx + item.sy) / 2))));
+    });
+
+    function endDrag() {
+      if (!dragEl) return;
+      const it = item, wasMoved = moved;
+      dragEl.classList.remove('dragging');
+      dragEl = null; item = null;
+      if (wasMoved) { saveCache(); persistStress(it); }
+    }
+    root.addEventListener('pointerup', endDrag);
+    root.addEventListener('pointercancel', endDrag);
   }
 
   // ============================================================

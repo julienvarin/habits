@@ -937,18 +937,6 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 }
 .td-add-btn:active { transform: scale(0.93); }
 
-.td-lbl-row {
-  display: flex; align-items: center; gap: 8px;
-  flex-wrap: wrap; margin-top: 8px; min-height: 28px;
-}
-.td-lbl-picks { display: flex; flex-wrap: wrap; gap: 6px; }
-.td-lp {
-  font-size: 12px; font-weight: 600; padding: 4px 10px; border-radius: 99px;
-  background: var(--bg-inset); border: 1.5px solid var(--border); color: var(--fg-dim);
-  transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.08s;
-}
-.td-lp:active { transform: scale(0.94); }
-.td-lp.on { background: var(--fg); border-color: transparent; color: var(--bg-card); }
 .td-new-lbl {
   width: 28px; height: 28px; flex-shrink: 0;
   display: inline-flex; align-items: center; justify-content: center;
@@ -958,20 +946,7 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 }
 .td-new-lbl:hover { color: var(--accent); border-color: var(--accent); }
 
-.td-active-lbl {
-  display: flex; align-items: center; gap: 6px;
-  background: var(--bg-card); border: 1px solid var(--border);
-  border-radius: 99px; padding: 3px 10px;
-}
-.td-lbl-tag { font-size: 12px; font-weight: 700; color: var(--fg); }
-.td-lbl-clr {
-  font-size: 12px; color: var(--fg-dim);
-  width: 16px; height: 16px; display: flex; align-items: center; justify-content: center;
-  border-radius: 50%; transition: color 0.1s;
-}
-.td-lbl-clr:hover { color: var(--danger); }
-
-.td-filter-bar { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+.td-filter-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 14px; }
 .td-f {
   font-size: 12px; font-weight: 600; padding: 5px 12px; border-radius: 99px;
   background: var(--bg-card); border: 1.5px solid var(--border); color: var(--fg-dim);
@@ -1061,6 +1036,74 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
   transition: color 0.1s;
 }
 .td-clear-btn:hover { color: var(--danger); }
+
+/* Stress board — drag tasks by complexity (X) and stress (Y) */
+.td-stress-wrap {
+  display: grid;
+  grid-template-columns: 20px 1fr;
+  grid-template-rows: 1fr 20px;
+  gap: 6px; margin-bottom: 16px;
+}
+.td-axis-y {
+  grid-column: 1; grid-row: 1;
+  writing-mode: vertical-rl; transform: rotate(180deg);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 700; letter-spacing: 0.04em; color: var(--fg-dim);
+}
+.td-axis-x {
+  grid-column: 2; grid-row: 2;
+  text-align: center; font-size: 11px; font-weight: 700;
+  letter-spacing: 0.04em; color: var(--fg-dim);
+}
+.td-stress-board {
+  grid-column: 2; grid-row: 1;
+  position: relative; width: 100%; aspect-ratio: 1 / 1;
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  overflow: hidden; touch-action: none;
+  background: linear-gradient(to bottom left,
+    color-mix(in srgb, var(--danger) 16%, var(--bg-card)) 0%,
+    var(--bg-card) 50%,
+    color-mix(in srgb, var(--accent) 16%, var(--bg-card)) 100%);
+}
+/* Faint centre crosshair to read quadrants against */
+.td-stress-board::before,
+.td-stress-board::after {
+  content: ''; position: absolute; background: var(--border); opacity: 0.5;
+}
+.td-stress-board::before { left: 50%; top: 0; bottom: 0; width: 1px; }
+.td-stress-board::after  { top: 50%; left: 0; right: 0; height: 1px; }
+
+.td-stress-chip {
+  position: absolute; transform: translate(-50%, -50%);
+  display: inline-flex; align-items: center; gap: 4px; max-width: 62%;
+  padding: 7px 6px 7px 12px; border-radius: 99px;
+  background: color-mix(in srgb, hsl(var(--hue, 90) 65% 45%) 15%, var(--bg-card));
+  border: 1.5px solid color-mix(in srgb, hsl(var(--hue, 90) 65% 45%) 45%, var(--border));
+  box-shadow: var(--shadow-sm);
+  font-size: 13px; font-weight: 600; color: var(--fg);
+  cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none;
+  transition: box-shadow 0.15s;
+}
+.td-stress-chip.dragging {
+  cursor: grabbing; box-shadow: var(--shadow-lg);
+  transform: translate(-50%, -50%) scale(1.06); z-index: 5;
+}
+.td-stress-txt {
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; pointer-events: none;
+}
+.td-stress-x {
+  width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 16px; line-height: 1; color: var(--fg-dim);
+  background: rgba(0,0,0,0.06); transition: color 0.1s;
+}
+.td-stress-x:hover { color: var(--danger); }
+
+.td-stress-hint {
+  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+  text-align: center; padding: 24px; pointer-events: none;
+  color: var(--fg-dim); font-size: 14px; line-height: 1.7;
+}
 
 /* ============================================================
    JOURNAL
