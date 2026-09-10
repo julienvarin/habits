@@ -352,16 +352,25 @@
 
   // ---- Stress mode ----
   // A 2-D board: X = complexity (simple → complex), Y = stress (calm → stressful).
-  // Tasks are chips you drag with a finger to where they sit; position persists.
+  // Each task is a dot you drag to where it sits (position persists); tapping a
+  // dot reveals its title. Below the board, the same tasks are a tickable list —
+  // ticking one marks it done and drops its dot off the board.
   function stressBody() {
-    const items = todos.filter(t => t.kind === 'stress' && !t.done);
+    const items   = todos.filter(t => t.kind === 'stress');
+    const pending = items.filter(t => !t.done);
+    const done    = items.filter(t =>  t.done);
 
-    const chipsHtml = items.map(stressChipHtml).join('');
-    const hint = items.length ? '' : `
+    const dotsHtml = pending.map(stressDotHtml).join('');
+    const hint = pending.length ? '' : `
       <div class="td-stress-hint">
-        Add a task above, then drag it:<br>
-        right = more complex, up = more stressful.
+        Add a task above, then drag its dot:<br>
+        right = more complex, up = more stressful.<br>
+        Tap a dot to see its title.
       </div>`;
+
+    const listHtml = pending.length
+      ? `<div class="td-stress-list">${pending.map(stressListRow).join('')}</div>`
+      : '';
 
     return `
       <div class="td-add-wrap">
@@ -374,27 +383,50 @@
       <div class="td-stress-wrap">
         <div class="td-axis-y">Stress ↑</div>
         <div class="td-stress-board">
-          ${chipsHtml}
+          ${dotsHtml}
           ${hint}
         </div>
         <div class="td-axis-x">Complexity →</div>
-      </div>`;
+      </div>
+      ${listHtml}
+      ${stressDoneHtml(done)}`;
   }
 
-  function stressChipHtml(t) {
+  function stressDotHtml(t) {
     const sx = clamp01(typeof t.sx === 'number' ? t.sx : 0.15);
     const sy = clamp01(typeof t.sy === 'number' ? t.sy : 0.15);
     // Combined "load" drives the colour: calm+simple → green, stressful+complex → red.
-    const hue = Math.round(140 * (1 - (sx + sy) / 2));
+    const hue  = Math.round(140 * (1 - (sx + sy) / 2));
     const left = (sx * 100).toFixed(2);
     const top  = ((1 - sy) * 100).toFixed(2);   // top of the board is high stress
+    // Flip the reveal label below the dot when it sits high, so it isn't clipped.
+    const below = sy > 0.62 ? ' label-below' : '';
     return `
-      <div class="td-stress-chip" data-id="${t.id}"
+      <div class="td-stress-dot${below}" data-id="${t.id}"
            style="left:${left}%; top:${top}%; --hue:${hue}">
-        <span class="td-stress-txt">${esc(t.text)}</span>
-        <button class="td-stress-x" data-taction="delete" data-id="${t.id}"
-                aria-label="Done / remove">×</button>
+        <span class="td-stress-label">${esc(t.text)}</span>
       </div>`;
+  }
+
+  // A tickable list row (checkbox + text, no delete cross).
+  function stressListRow(t) {
+    return `
+      <div class="td-item ${t.done ? 'done' : ''}">
+        <button class="td-cb ${t.done ? 'done' : ''}"
+                data-taction="toggle" data-id="${t.id}" aria-label="${t.done ? 'Undo' : 'Mark done'}"></button>
+        <span class="td-txt">${esc(t.text)}</span>
+      </div>`;
+  }
+
+  function stressDoneHtml(done) {
+    return done.length ? `
+      <details class="td-done-details">
+        <summary class="td-done-sum">Done <span class="td-done-ct">${done.length}</span></summary>
+        <div class="td-done-list">
+          ${done.map(stressListRow).join('')}
+          <button class="td-clear-btn" data-taction="clear-done">Clear completed</button>
+        </div>
+      </details>` : '';
   }
 
   function clamp01(n) { return Math.max(0, Math.min(1, n)); }
@@ -532,33 +564,37 @@
   // Stress board drag (pointer events — works with touch + mouse)
   // ============================================================
   function attachStressDrag(root) {
-    let dragEl = null, item = null, board = null, moved = false;
+    let dragEl = null, item = null, board = null, moved = false, startX = 0, startY = 0;
 
     root.addEventListener('pointerdown', e => {
       if (viewMode !== 'stress') return;
-      const chip = e.target.closest('.td-stress-chip');
-      if (!chip) return;
-      if (e.target.closest('[data-taction]')) return;   // let the × delete
+      const dot = e.target.closest('.td-stress-dot');
+      if (!dot) return;
       board = root.querySelector('.td-stress-board');
       if (!board) return;
-      item = todos.find(t => t.id === chip.dataset.id);
+      item = todos.find(t => t.id === dot.dataset.id);
       if (!item) return;
-      dragEl = chip;
+      dragEl = dot;
       moved  = false;
-      chip.classList.add('dragging');
-      try { chip.setPointerCapture(e.pointerId); } catch {}
+      startX = e.clientX; startY = e.clientY;
+      try { dot.setPointerCapture(e.pointerId); } catch {}
       e.preventDefault();
     });
 
     root.addEventListener('pointermove', e => {
       if (!dragEl) return;
+      // Ignore tiny jitter so a tap isn't mistaken for a drag.
+      if (!moved) {
+        if (Math.hypot(e.clientX - startX, e.clientY - startY) < 5) return;
+        moved = true;
+        dragEl.classList.add('dragging');
+      }
       const r  = board.getBoundingClientRect();
       const fx = clamp01((e.clientX - r.left) / r.width);
       const fy = clamp01((e.clientY - r.top)  / r.height);
-      // Keep a small margin so chips stay readable at the edges.
+      // Keep a small margin so dots stay inside the board.
       item.sx = Math.max(0.04, Math.min(0.96, fx));
       item.sy = Math.max(0.04, Math.min(0.96, 1 - fy));   // top = high stress
-      moved = true;
       dragEl.style.left = (item.sx * 100).toFixed(2) + '%';
       dragEl.style.top  = ((1 - item.sy) * 100).toFixed(2) + '%';
       dragEl.style.setProperty('--hue', String(Math.round(140 * (1 - (item.sx + item.sy) / 2))));
@@ -566,10 +602,17 @@
 
     function endDrag() {
       if (!dragEl) return;
-      const it = item, wasMoved = moved;
-      dragEl.classList.remove('dragging');
+      const el = dragEl, it = item, wasMoved = moved;
+      el.classList.remove('dragging');
       dragEl = null; item = null;
-      if (wasMoved) { saveCache(); persistStress(it); }
+      if (wasMoved) {
+        saveCache(); persistStress(it);
+      } else {
+        // A tap (no drag): reveal this dot's title, hiding any other.
+        const wasShown = el.classList.contains('show');
+        board.querySelectorAll('.td-stress-dot.show').forEach(d => d.classList.remove('show'));
+        if (!wasShown) el.classList.add('show');
+      }
     }
     root.addEventListener('pointerup', endDrag);
     root.addEventListener('pointercancel', endDrag);
