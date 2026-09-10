@@ -96,16 +96,6 @@
     localStorage.setItem(MODE_KEY, JSON.stringify({ viewMode, activeList }));
   }
 
-  // Deterministic color from label name
-  const LC = ['#007aff','#34c759','#ff9f0a','#af52de','#ff6723','#ff3b30','#5ac8fa','#30d158'];
-  const _cc = {};
-  function lcolor(l) {
-    if (_cc[l]) return _cc[l];
-    let h = 5381;
-    for (let i = 0; i < l.length; i++) h = ((h << 5) + h + l.charCodeAt(i)) >>> 0;
-    return (_cc[l] = LC[h % LC.length]);
-  }
-
   const _ESC = { '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' };
   function esc(s) { return String(s).replace(/[&<>"']/g, c => _ESC[c]); }
 
@@ -307,14 +297,14 @@
         <button class="td-f ${!activeFilter ? 'on' : ''}" data-tfilter="">All</button>
         ${labels.map(l =>
           `<button class="td-f ${activeFilter === l ? 'on' : ''}"
-                  data-tfilter="${esc(l)}" style="--lc:${lcolor(l)}">${esc(l)}</button>`
+                  data-tfilter="${esc(l)}">${esc(l)}</button>`
         ).join('')}
       </div>` : '';
 
     const pendingHtml = pending.length
       ? pending.map(rowHtml).join('')
       : `<div class="td-zero">${
-          activeFilter ? `No open todos in #${esc(activeFilter)}` : 'Nothing here yet — add something above!'
+          activeFilter ? `No open todos in ${esc(activeFilter)}` : 'Nothing here yet — add something above!'
         }</div>`;
 
     const doneSection = doneSectionHtml(done);
@@ -322,12 +312,12 @@
     // Label picks + pending indicator
     const picksHtml = labels.map(l =>
       `<button class="td-lp ${pendingLabel === l ? 'on' : ''}"
-              data-tsetlbl="${esc(l)}" style="--lc:${lcolor(l)}">#${esc(l)}</button>`
-    ).join('') + `<button class="td-new-lbl" data-taction="new-label">+ label</button>`;
+              data-tsetlbl="${esc(l)}">${esc(l)}</button>`
+    ).join('') + `<button class="td-new-lbl" data-taction="new-label" aria-label="New label">+</button>`;
 
     const pendingLblHtml = pendingLabel
       ? `<div class="td-active-lbl">
-          <span class="td-lbl-tag" style="--lc:${lcolor(pendingLabel)}">#${esc(pendingLabel)}</span>
+          <span class="td-lbl-tag">${esc(pendingLabel)}</span>
           <button class="td-lbl-clr" data-taction="clear-label">✕</button>
         </div>` : '';
 
@@ -366,9 +356,9 @@
       <div class="td-filter-bar td-list-bar">
         ${lists.map(l =>
           `<button class="td-f ${activeList === l ? 'on' : ''}"
-                  data-tlist="${esc(l)}" style="--lc:${lcolor(l)}">${esc(l)}</button>`
+                  data-tlist="${esc(l)}">${esc(l)}</button>`
         ).join('')}
-        <button class="td-new-lbl" data-taction="new-list">+ list</button>
+        <button class="td-new-lbl" data-taction="new-list" aria-label="New list">+</button>
       </div>`;
 
     // No lists at all yet.
@@ -377,7 +367,7 @@
         ${chips}
         <div class="td-zero">
           Keep lists of things to watch, read, or buy.<br>
-          Tap <strong>+ list</strong> to start one.
+          Tap <strong>+</strong> to start one.
         </div>`;
     }
 
@@ -416,7 +406,7 @@
   function rowHtml(t) {
     // List items are grouped under a selected list already, so no per-row tag there.
     const lbl = (t.kind !== 'list' && t.label)
-      ? `<span class="td-tag" style="--lc:${lcolor(t.label)}">${esc(t.label)}</span>`
+      ? `<span class="td-tag">${esc(t.label)}</span>`
       : '';
     return `
       <div class="td-item ${t.done ? 'done' : ''}">
@@ -437,13 +427,13 @@
     const labels = allLabels();
     picks.innerHTML = labels.map(l =>
       `<button class="td-lp ${pendingLabel === l ? 'on' : ''}"
-              data-tsetlbl="${esc(l)}" style="--lc:${lcolor(l)}">#${esc(l)}</button>`
-    ).join('') + `<button class="td-new-lbl" data-taction="new-label">+ label</button>`;
+              data-tsetlbl="${esc(l)}">${esc(l)}</button>`
+    ).join('') + `<button class="td-new-lbl" data-taction="new-label" aria-label="New label">+</button>`;
 
     let plEl = row.querySelector('.td-active-lbl');
     if (pendingLabel) {
       if (!plEl) { plEl = document.createElement('div'); plEl.className = 'td-active-lbl'; row.appendChild(plEl); }
-      plEl.innerHTML = `<span class="td-lbl-tag" style="--lc:${lcolor(pendingLabel)}">#${esc(pendingLabel)}</span>
+      plEl.innerHTML = `<span class="td-lbl-tag">${esc(pendingLabel)}</span>
         <button class="td-lbl-clr" data-taction="clear-label">✕</button>`;
     } else if (plEl) {
       plEl.remove();
