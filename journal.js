@@ -11,6 +11,7 @@
   let   viewDate  = todayStr();  // the day currently being viewed/edited
   let   saveTimer = null;        // debounce handle for the current editor
   let   eventsReady = false;
+  let   recentOpen = false;      // whether the "Past entries" archive is expanded
 
   // ============================================================
   // Date helpers (local timezone — mirrors app.js, kept self-contained)
@@ -370,11 +371,12 @@
           <span class="jr-recent-preview">${esc(preview)}</span>
         </button>`;
     }).join('');
+    // Collapsed by default so past days don't pile up into a huge list.
     return `
-      <div class="jr-recent">
-        <div class="jr-recent-title">Past entries</div>
-        ${items}
-      </div>`;
+      <details class="jr-recent"${recentOpen ? ' open' : ''}>
+        <summary class="jr-recent-title">Past entries<span class="jr-recent-count">${dates.length}</span></summary>
+        <div class="jr-recent-body">${items}</div>
+      </details>`;
   }
 
   function editorHtml() {
@@ -382,18 +384,18 @@
       <div class="jr-editor">
         <div class="jr-field">
           <textarea id="jr-day" class="jr-textarea" rows="4" maxlength="2000"
-                    aria-label="What I did today"
-                    placeholder="What I did today" spellcheck="true"></textarea>
+                    aria-label="Something I did today"
+                    placeholder="Something I did today" spellcheck="true"></textarea>
         </div>
         <div class="jr-field">
           <textarea id="jr-learnt" class="jr-textarea" rows="4" maxlength="2000"
-                    aria-label="What I learnt today"
-                    placeholder="What I learnt today" spellcheck="true"></textarea>
+                    aria-label="Something to remember"
+                    placeholder="Something to remember" spellcheck="true"></textarea>
         </div>
         <div class="jr-field">
           <textarea id="jr-tomorrow" class="jr-textarea" rows="2" maxlength="500"
-                    aria-label="One thing to do tomorrow"
-                    placeholder="One thing to do tomorrow" spellcheck="true"></textarea>
+                    aria-label="Something to do tomorrow"
+                    placeholder="Something to do tomorrow" spellcheck="true"></textarea>
         </div>
         <div class="jr-status-row"><span id="jr-status" class="jr-status"></span></div>
       </div>`;
@@ -476,6 +478,12 @@
     root.dataset.jrClickWired = '1';
 
     root.addEventListener('click', e => {
+      // Keep the archive's expanded/collapsed state across re-renders (renderMeta
+      // rebuilds this section on every keystroke). The <details> toggles natively;
+      // we just mirror the new state so it survives the rebuild.
+      const sum = e.target.closest('.jr-recent-title');
+      if (sum) { recentOpen = !recentOpen; return; }
+
       const nav = e.target.closest('[data-jaction]');
       if (nav) {
         const a = nav.dataset.jaction;

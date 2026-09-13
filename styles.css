@@ -225,6 +225,10 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 .habit-card:hover .card-edit-btn { opacity: 1; }
 @media (hover: none) { .card-edit-btn { opacity: 0.45; } }
 
+/* Flame streak marker — tinted to the task's colour theme */
+.flame-ico { display: inline-block; vertical-align: -0.14em; }
+.history-meta .flame-ico { margin-right: 1px; }
+
 /* Streak badge (top-right of card header) */
 .card-streak-badge {
   flex-shrink: 0;
@@ -572,7 +576,9 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
   padding: 8px 6px; border-radius: var(--radius-sm); text-align: left;
   transition: background 0.12s;
 }
-.stats-rank:hover { background: var(--bg-inset); }
+.stats-rank:not(.static) { cursor: pointer; }
+.stats-rank:not(.static):hover { background: var(--bg-inset); }
+.stats-rank.static { cursor: default; }
 .stats-rank-name { font-size: 13.5px; font-weight: 500; color: var(--fg); min-width: 76px; max-width: 40%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .stats-rank-track { flex: 1; height: 7px; border-radius: 99px; background: var(--bg-inset); overflow: hidden; }
 .stats-rank-fill { display: block; height: 100%; border-radius: 99px; transition: width 0.5s cubic-bezier(.22,1,.36,1); }
@@ -1178,12 +1184,26 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 .jr-status-row { min-height: 16px; }
 .jr-status { font-size: 12px; color: var(--fg-dim); transition: opacity 0.15s; }
 
-/* Past entries */
-.jr-recent { display: flex; flex-direction: column; gap: 6px; margin-bottom: 16px; }
+/* Past entries — collapsible archive */
+.jr-recent { margin-bottom: 16px; }
 .jr-recent-title {
+  display: flex; align-items: center; gap: 8px; cursor: pointer;
   font-size: 12px; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase;
-  color: var(--fg-dim); margin: 4px 2px 4px;
+  color: var(--fg-dim); margin: 4px 2px; padding: 6px 2px;
+  list-style: none; user-select: none;
 }
+.jr-recent-title::-webkit-details-marker { display: none; }
+.jr-recent-title::before {
+  content: '›'; display: inline-block; font-size: 15px; line-height: 1;
+  transition: transform 0.15s ease; transform: rotate(0deg);
+}
+.jr-recent[open] .jr-recent-title::before { transform: rotate(90deg); }
+.jr-recent-count {
+  font-weight: 650; color: var(--fg-2); background: var(--bg-inset);
+  border-radius: 99px; padding: 1px 7px; letter-spacing: 0; text-transform: none;
+  font-variant-numeric: tabular-nums;
+}
+.jr-recent-body { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
 .jr-recent-item {
   display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
   width: 100%; text-align: left;

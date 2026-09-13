@@ -35,6 +35,19 @@
   function esc(s) { return String(s).replace(/[&<>"']/g, c => ESC[c]); }
 
   // ============================================================
+  // Flame icon — a fire streak marker tinted to the task's colour
+  // theme (replaces the fixed-colour 🔥 emoji so it inherits --c).
+  // ============================================================
+  function flameIcon(color) {
+    return `<svg class="flame-ico" viewBox="0 0 16 16" width="1em" height="1em" ` +
+      `fill="${color || 'currentColor'}" aria-hidden="true">` +
+      `<path d="M8 16c3.314 0 6-2 6-5.5 0-1.5-.5-4-2.5-6 .25 1.5-1.25 2-1.25 2C11 4 9 ` +
+      `.5 6 0c.357 2 .5 4-2 6-1.25 1-2 2.729-2 4.5C2 14 4.686 16 8 16m0-1c-1.657 ` +
+      `0-3-1-3-2.75 0-.75.25-2 1.25-3C6.125 10 7 10.5 7 10.5c-.375-1.25.5-3.25 ` +
+      `2-3.5-.179 1-.25 2 1 3 .625.5 1 1.364 1 2.25C11 14 9.657 15 8 15"/></svg>`;
+  }
+
+  // ============================================================
   // Toast
   // ============================================================
   const toastEl = document.getElementById('toast');
@@ -254,7 +267,7 @@
           <h2 class="card-name">${esc(h.name)}</h2>
           ${streak > 0
             ? `<span class="card-streak-badge${isRecord ? ' record' : ''}"
-                     title="${streak} day${streak===1?'':'s'}${isRecord?' — new record!':''}">🔥 ${streak}</span>`
+                     title="${streak} day${streak===1?'':'s'}${isRecord?' — new record!':''}">${flameIcon(h.color)} ${streak}</span>`
             : ''}
           <button class="card-edit-btn" data-action="edit" data-id="${h.id}" aria-label="Edit ${esc(h.name)}">···</button>
         </div>
@@ -298,7 +311,7 @@
     if (!text) {
       const isToday = state.bigTaskDayOffset === 0;
       const msg = isToday
-        ? 'Set “one thing to do tomorrow” in your journal below — it shows up here tomorrow.'
+        ? 'Set “Something to do tomorrow” in your journal below — it shows up here tomorrow.'
         : 'No big task set for this day.';
       return `
         <div class="bigtask-tile empty">
@@ -492,15 +505,30 @@
   function historyBlock(scope) {
     const year      = new Date().getFullYear();
     const todayS    = todayStr();
-    const yearStart = new Date(year, 0, 1);
-    const startDow  = (yearStart.getDay() + 6) % 7; // Mon=0
-    const gridStart = shiftDays(yearStart, -startDow);
+    const yearEnd   = new Date(year, 11, 31);
     const MONTHS    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
+    // Start the heatmap at the week of the first tick this year (across the
+    // habits in view) rather than always January — so the grid opens on the
+    // week the user actually started completing tasks. Falls back to Jan 1
+    // when there are no ticks yet this year.
+    const shownHabits = scope ? [scope] : state.habits;
+    let firstTick = null;
+    for (const h of shownHabits) {
+      for (const ds of tickDates(h.id)) {
+        if (ds.startsWith(String(year))) { if (!firstTick || ds < firstTick) firstTick = ds; break; }
+      }
+    }
+    const anchor    = firstTick ? new Date(firstTick + 'T00:00:00') : new Date(year, 0, 1);
+    const anchorDow = (anchor.getDay() + 6) % 7; // Mon=0
+    const gridStart = shiftDays(anchor, -anchorDow);
+    // Weeks needed to reach the end of the year from gridStart.
+    const totalWeeks = Math.max(1, Math.ceil((yearEnd - gridStart) / 86400000 / 7) + 1);
 
     function buildYearHeatmap(habitId, color) {
       const monthAtWeek = {};
       const weeks = [];
-      for (let w = 0; w < 53; w++) {
+      for (let w = 0; w < totalWeeks; w++) {
         const cells = [];
         for (let d = 0; d < 7; d++) {
           const date   = shiftDays(gridStart, w * 7 + d);
@@ -545,7 +573,7 @@
           <div class="history-head">
             <div class="history-swatch"></div>
             <h3>${esc(h.name)}</h3>
-            <span class="history-meta">${yearTicks}d${streak > 0 ? ` · 🔥${streak}` : ''}</span>
+            <span class="history-meta">${yearTicks}d${streak > 0 ? ` · ${flameIcon(h.color)}${streak}` : ''}</span>
           </div>
           ${buildYearHeatmap(h.id, h.color)}
         </div>`;
@@ -580,7 +608,20 @@
   // ---- Stats: scope + aggregate helpers ----
   let statsHabit = null; // null = all habits; otherwise a habit object
   const ACCENT = '#34c759';
+  const JOURNAL_COLOR = '#5e5ce6'; // journaling task accent (indigo)
+  const BIGTASK_COLOR = '#ff9f0a'; // one-big-task accent (amber)
   const WD_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+
+  // 30-day (or `days`) completion rate for a journal-like module exposing
+  // activeOn(dateStr) / doneOn(dateStr) — used for the by-task breakdown rows.
+  function activityRate(mod, days) {
+    let done = 0, active = 0, base = new Date();
+    for (let i = 0; i < days; i++) {
+      const ds = fmtDate(shiftDays(base, -i));
+      if (mod.activeOn(ds)) { active++; if (mod.doneOn(ds)) done++; }
+    }
+    return active ? Math.round((done / active) * 100) : 0;
+  }
 
   const createdStr = h => (h.created_at ? fmtDate(new Date(h.created_at)) : '0000-01-01');
 
@@ -749,24 +790,8 @@
         [`${tickDates(scope.id).length}`, 'Total ticks'],
       ];
     }
-    // Add journaling KPIs to the top row when viewing all habits.
-    if (!scope && window.journalScore) {
-      const j = window.journalScore;
-      const year = new Date().getFullYear();
-      tiles.push(
-        [`${j.streak()}<span class="stat-sub">d</span>`, 'Journal streak'],
-        [`${j.longest()}<span class="stat-sub">d</span>`, 'Longest journal'],
-        [`${j.yearCount(year)}`, `Entries ${year}`],
-      );
-    }
-    // One-big-task KPIs (all-habits scope only).
-    if (!scope && window.journalBig) {
-      const b = window.journalBig;
-      tiles.push(
-        [`${b.streak()}<span class="stat-sub">d</span>`, 'Big-task streak'],
-        [`${b.doneCount()}`, 'Big tasks done'],
-      );
-    }
+    // Journaling and the one-big-task now appear as tasks in the breakdown
+    // list below (not as extra number tiles at the top of the page).
     const overview = `<div class="stats-overview">${tiles.map(([v, l]) =>
       `<div class="stat-tile"><div class="num">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
 
@@ -798,25 +823,37 @@
         ${barsFigure(rhythm, color)}
       </div>`;
 
-    // ---- By-habit breakdown (all scope only) ----
+    // ---- By-task breakdown (all scope only) ----
+    // Habits are tappable to focus; journaling and the one big task appear here
+    // as tasks too (they aren't focusable scopes, so they render as static rows).
     let breakdown = '';
-    if (!scope && state.habits.length > 1) {
-      const rows = state.habits
-        .map(h => ({ h, r: completionRate(h.id, 30) }))
-        .sort((a, b) => b.r - a.r)
-        .map(({ h, r }) => `
-          <button class="stats-rank" data-action="stats-filter" data-habit="${h.id}">
-            <span class="stats-dot" style="background:${h.color}"></span>
-            <span class="stats-rank-name">${esc(h.name)}</span>
-            <span class="stats-rank-track"><span class="stats-rank-fill" style="width:${r}%;background:${h.color}"></span></span>
-            <span class="stats-rank-pct">${r}%</span>
-          </button>`).join('');
-      breakdown = `
-        <div class="stats-card">
-          <div class="stats-card-head"><span class="stats-card-title">By habit</span></div>
-          <div class="stats-card-sub">30-day completion · tap to focus</div>
-          <div class="stats-rank-list">${rows}</div>
-        </div>`;
+    if (!scope) {
+      const items = state.habits.map(h =>
+        ({ name: h.name, color: h.color, r: completionRate(h.id, 30), habitId: h.id }));
+      if (window.journalScore && window.journalScore.firstDate())
+        items.push({ name: 'Journal', color: JOURNAL_COLOR, r: activityRate(window.journalScore, 30) });
+      if (window.journalBig && window.journalBig.firstAssignedDate())
+        items.push({ name: 'One big task', color: BIGTASK_COLOR, r: activityRate(window.journalBig, 30) });
+      items.sort((a, b) => b.r - a.r);
+
+      if (items.length > 1) {
+        const rows = items.map(it => {
+          const inner = `
+            <span class="stats-dot" style="background:${it.color}"></span>
+            <span class="stats-rank-name">${esc(it.name)}</span>
+            <span class="stats-rank-track"><span class="stats-rank-fill" style="width:${it.r}%;background:${it.color}"></span></span>
+            <span class="stats-rank-pct">${it.r}%</span>`;
+          return it.habitId
+            ? `<button class="stats-rank" data-action="stats-filter" data-habit="${it.habitId}">${inner}</button>`
+            : `<div class="stats-rank static">${inner}</div>`;
+        }).join('');
+        breakdown = `
+          <div class="stats-card">
+            <div class="stats-card-head"><span class="stats-card-title">By task</span></div>
+            <div class="stats-card-sub">30-day completion · tap a habit to focus</div>
+            <div class="stats-rank-list">${rows}</div>
+          </div>`;
+      }
     }
 
     root.innerHTML = pills + overview + trendCard + rhythmCard + breakdown + historyBlock(scope);
@@ -1165,13 +1202,37 @@
     morningState.calendar = { today: sort(todayEvs), tomorrow: sort(tomorrowEvs) };
   }
 
+  // corsproxy.io now returns 401 for programmatic requests unless the calling
+  // origin is registered on a (paid) account, which is why the calendar started
+  // failing with a 401. Try it first (it still works for some setups), then fall
+  // back to allorigins, which needs no key. Whichever returns the iCal text wins.
+  async function fetchViaProxies(targetUrl) {
+    const proxies = [
+      u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+      u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
+    ];
+    let lastErr = null;
+    for (const make of proxies) {
+      try {
+        const resp = await fetch(make(targetUrl));
+        if (!resp.ok) { lastErr = new Error(`HTTP ${resp.status}`); continue; }
+        const text = await resp.text();
+        if (text && /BEGIN:VCALENDAR/i.test(text)) return text;
+        lastErr = new Error('Unexpected response (not an iCal feed)');
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr || new Error('All proxies failed');
+  }
+
   async function fetchCalendarEvents() {
     const url = window.JULIEN_CALENDAR_ICAL_URL;
     if (!url || url.startsWith('REPLACE_ME')) return;
-    const proxy = `https://corsproxy.io/?url=${encodeURIComponent(url)}`;
-    const resp  = await fetch(proxy);
-    if (!resp.ok) throw new Error(`iCal fetch failed (${resp.status})`);
-    const text = await resp.text();
+    let text;
+    try {
+      text = await fetchViaProxies(url);
+    } catch (err) {
+      throw new Error(`iCal fetch failed (${err.message})`);
+    }
     parseIcal(text);
   }
 
