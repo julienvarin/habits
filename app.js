@@ -1120,9 +1120,10 @@
 
   loadMorningCache();
 
-  // wttr.in reports World Weather Online (WWO) codes (113–395), NOT WMO codes.
-  // Map each to an icon; the human-readable label comes from wttr's own
-  // weatherDesc, so a clear day never renders as a thunderstorm.
+  // Icon table keyed by World Weather Online (WWO) codes (113–395). Weather now
+  // comes from Open-Meteo (WMO codes), which fetchWeather() translates to these
+  // WWO codes; the human-readable label is supplied alongside via weatherDesc,
+  // so a clear day never renders as a thunderstorm.
   const WWO_ICONS = {
     113: '☀️', 116: '🌤️', 119: '☁️', 122: '☁️', 143: '🌫️',
     176: '🌦️', 179: '🌨️', 182: '🌨️', 185: '🌧️', 200: '⛈️',
@@ -1147,11 +1148,103 @@
 
   const WEATHER_CITY_KEY = 'habits.weatherCity';
 
+  // Open-Meteo reports WMO codes (0–99). Map each to the equivalent WWO code so
+  // the existing WWO_ICONS table + weatherInfo() keep working unchanged, plus a
+  // human-readable label (Open-Meteo, unlike wttr.in, sends no text description).
+  const WMO_MAP = {
+    0:  { wwo: 113, desc: 'Clear' },
+    1:  { wwo: 116, desc: 'Mainly clear' },
+    2:  { wwo: 116, desc: 'Partly cloudy' },
+    3:  { wwo: 122, desc: 'Overcast' },
+    45: { wwo: 248, desc: 'Fog' },
+    48: { wwo: 248, desc: 'Rime fog' },
+    51: { wwo: 266, desc: 'Light drizzle' },
+    53: { wwo: 266, desc: 'Drizzle' },
+    55: { wwo: 266, desc: 'Heavy drizzle' },
+    56: { wwo: 281, desc: 'Freezing drizzle' },
+    57: { wwo: 284, desc: 'Freezing drizzle' },
+    61: { wwo: 296, desc: 'Light rain' },
+    63: { wwo: 302, desc: 'Rain' },
+    65: { wwo: 308, desc: 'Heavy rain' },
+    66: { wwo: 311, desc: 'Freezing rain' },
+    67: { wwo: 314, desc: 'Freezing rain' },
+    71: { wwo: 326, desc: 'Light snow' },
+    73: { wwo: 332, desc: 'Snow' },
+    75: { wwo: 338, desc: 'Heavy snow' },
+    77: { wwo: 350, desc: 'Snow grains' },
+    80: { wwo: 353, desc: 'Light showers' },
+    81: { wwo: 356, desc: 'Showers' },
+    82: { wwo: 359, desc: 'Heavy showers' },
+    85: { wwo: 362, desc: 'Light snow showers' },
+    86: { wwo: 371, desc: 'Snow showers' },
+    95: { wwo: 386, desc: 'Thunderstorm' },
+    96: { wwo: 392, desc: 'Thunderstorm with hail' },
+    99: { wwo: 392, desc: 'Thunderstorm with hail' },
+  };
+
+  // Format an ISO datetime (Open-Meteo sunrise/sunset) as e.g. "06:32 AM" to
+  // match the string shape wttr.in used to return for astronomy.
+  function fmtClock(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return '';
+    return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  }
+
+  // wttr.in dropped CORS headers under load (fetch → "Load failed") and is
+  // unreliable in general, so weather now comes from Open-Meteo (free, no key,
+  // sends Access-Control-Allow-Origin: *). The response is adapted into the same
+  // shape wttr.in's j1 endpoint used, so the renderer stays unchanged.
   async function fetchWeather() {
     const city = localStorage.getItem(WEATHER_CITY_KEY) || 'Paris';
-    const resp = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`);
+
+    // 1. Resolve the city name to coordinates.
+    const geoResp = await fetch(
+      `https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(city)}&count=1&language=en&format=json`);
+    if (!geoResp.ok) throw new Error(`Weather ${geoResp.status}`);
+    const geo = await geoResp.json();
+    const place = geo.results && geo.results[0];
+    if (!place) throw new Error(`City not found: ${city}`);
+
+    // 2. Fetch the forecast for those coordinates.
+    const params = new URLSearchParams({
+      latitude: place.latitude,
+      longitude: place.longitude,
+      current: 'temperature_2m,apparent_temperature,weather_code,wind_speed_10m',
+      daily: 'weather_code,temperature_2m_max,temperature_2m_min,sunrise,sunset',
+      hourly: 'precipitation',
+      timezone: 'auto',
+      forecast_days: '1',
+      wind_speed_unit: 'kmh',
+    });
+    const resp = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`);
     if (!resp.ok) throw new Error(`Weather ${resp.status}`);
-    morningState.weather = await resp.json();
+    const d = await resp.json();
+
+    // 3. Adapt into the wttr.in j1 shape the renderer expects.
+    const cur = d.current || {};
+    const curWmo = WMO_MAP[cur.weather_code] || { wwo: 119, desc: 'Cloudy' };
+    const hourly = (d.hourly && d.hourly.precipitation || [])
+      .map(mm => ({ precipMM: String(mm != null ? mm : 0) }));
+
+    morningState.weather = {
+      current_condition: [{
+        temp_C:       String(Math.round(cur.temperature_2m)),
+        FeelsLikeC:   cur.apparent_temperature != null ? String(Math.round(cur.apparent_temperature)) : '',
+        weatherCode:  String(curWmo.wwo),
+        weatherDesc:  [{ value: curWmo.desc }],
+        windspeedKmph: String(Math.round(cur.wind_speed_10m)),
+      }],
+      weather: [{
+        maxtempC: String(Math.round(d.daily.temperature_2m_max[0])),
+        mintempC: String(Math.round(d.daily.temperature_2m_min[0])),
+        hourly,
+        astronomy: [{
+          sunrise: fmtClock(d.daily.sunrise[0]),
+          sunset:  fmtClock(d.daily.sunset[0]),
+        }],
+      }],
+      nearest_area: [{ areaName: [{ value: place.name }] }],
+    };
   }
 
   function parseIcal(text) {
@@ -1204,10 +1297,11 @@
 
   // corsproxy.io now returns 401 for programmatic requests unless the calling
   // origin is registered on a (paid) account, which is why the calendar started
-  // failing with a 401. Try it first (it still works for some setups), then fall
-  // back to allorigins, which needs no key. Whichever returns the iCal text wins.
+  // failing with a 401. allorigins can also be flaky/rate-limited. Try several
+  // keyless CORS proxies in turn — whichever returns the iCal text first wins.
   async function fetchViaProxies(targetUrl) {
     const proxies = [
+      u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
       u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
       u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
     ];
