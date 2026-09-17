@@ -70,6 +70,17 @@
     return list.slice().sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
   }
 
+  // Midnight (local) marking the start of today — the cutoff between a todo
+  // completed "today" and one finished earlier.
+  function startOfToday() {
+    const d = new Date();
+    d.setHours(0, 0, 0, 0);
+    return d.getTime();
+  }
+  function isDoneToday(t) {
+    return typeof t.doneAt === 'number' && t.doneAt >= startOfToday();
+  }
+
   function allLabels() {
     const seen = new Set();
     for (const t of todos) if (t.kind === 'todo' && t.label) seen.add(t.label);
@@ -240,8 +251,13 @@
     }
   }
 
-  function clearDone() {
-    const doneIds = todos.filter(x => x.done && inCurrentScope(x)).map(x => x.id);
+  // `when` narrows which completed items are cleared: 'today', 'earlier', or
+  // undefined for all of them (keeps the plain "Clear completed" meaning).
+  function clearDone(when) {
+    const doneIds = todos.filter(x => x.done && inCurrentScope(x) && (
+      when === 'today'   ?  isDoneToday(x) :
+      when === 'earlier' ? !isDoneToday(x) : true
+    )).map(x => x.id);
     const drop    = new Set(doneIds);
     todos = todos.filter(x => !drop.has(x.id));
     saveCache();
@@ -419,14 +435,7 @@
   }
 
   function stressDoneHtml(done) {
-    return done.length ? `
-      <details class="td-done-details">
-        <summary class="td-done-sum">Done <span class="td-done-ct">${done.length}</span></summary>
-        <div class="td-done-list">
-          ${done.map(stressListRow).join('')}
-          <button class="td-clear-btn" data-taction="clear-done">Clear completed</button>
-        </div>
-      </details>` : '';
+    return doneSectionsHtml(done, stressListRow);
   }
 
   function clamp01(n) { return Math.max(0, Math.min(1, n)); }
@@ -485,15 +494,29 @@
       ${doneSectionHtml(done)}`;
   }
 
-  function doneSectionHtml(done) {
-    return done.length ? `
+  // Split completed items into two collapsible sections: "Done today" on top,
+  // then "Done" for everything finished before today. `row` renders each item
+  // (rowHtml for todos/lists, stressListRow for the stress board).
+  function doneSectionsHtml(done, row) {
+    const today   = done.filter(isDoneToday);
+    const earlier = done.filter(t => !isDoneToday(t));
+    return doneDetails('Done today', today,   'today',   row)
+         + doneDetails('Done',       earlier, 'earlier', row);
+  }
+
+  function doneDetails(title, items, when, row) {
+    return items.length ? `
       <details class="td-done-details">
-        <summary class="td-done-sum">Done <span class="td-done-ct">${done.length}</span></summary>
+        <summary class="td-done-sum">${title} <span class="td-done-ct">${items.length}</span></summary>
         <div class="td-done-list">
-          ${done.map(rowHtml).join('')}
-          <button class="td-clear-btn" data-taction="clear-done">Clear completed</button>
+          ${items.map(row).join('')}
+          <button class="td-clear-btn" data-taction="clear-done" data-when="${when}">Clear completed</button>
         </div>
       </details>` : '';
+  }
+
+  function doneSectionHtml(done) {
+    return doneSectionsHtml(done, rowHtml);
   }
 
   function rowHtml(t) {
@@ -525,7 +548,7 @@
 
       if (action === 'toggle')      { toggleItem(id); return; }
       if (action === 'delete')      { deleteItem(id); return; }
-      if (action === 'clear-done')  { clearDone();    return; }
+      if (action === 'clear-done')  { clearDone(el.dataset.when); return; }
       if (action === 'add') {
         const inp = document.getElementById('todo-input');
         if (inp) addTodo(inp.value);
