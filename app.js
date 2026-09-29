@@ -1070,7 +1070,7 @@
   // ============================================================
   const morningState = {
     weather: null, weatherErr: null,
-    calendar: { today: [], tomorrow: [] }, calErr: null,
+    calendar: { today: [], tomorrow: [] }, calLoaded: false, calErr: null,
     news: null, newsErr: null,
     events: null, eventsErr: null,
     reddit: null, redditErr: null,
@@ -1078,21 +1078,29 @@
     transit: null, transitErr: null,
     record: null, recordErr: null,
     lastFetched: null,
+    refreshing: false,
   };
 
-  // Persist calendar/news/events across page reloads (within the tab session)
-  const MORNING_CACHE_KEY = 'habits.morning.v1';
+  // Persisted in localStorage (not sessionStorage) so a cold PWA launch — iOS
+  // kills home-screen apps aggressively — paints the last data instantly and
+  // refreshes in the background instead of showing skeletons everywhere.
+  // v2: weather moved from wttr.in to Open-Meteo, so the shape changed.
+  const MORNING_CACHE_KEY = 'habits.morning.v2';
+  const CACHE_MAX_AGE_MS  = 18 * 60 * 60 * 1000; // never show yesterday's brief
 
   function loadMorningCache() {
     try {
-      const raw = sessionStorage.getItem(MORNING_CACHE_KEY);
+      sessionStorage.removeItem('habits.morning.v1');
+      const raw = localStorage.getItem(MORNING_CACHE_KEY);
       if (!raw) return;
       const c = JSON.parse(raw);
+      if (!c.lastFetched || Date.now() - c.lastFetched > CACHE_MAX_AGE_MS) return;
       const restoreEvs = evs => (evs || []).map(ev => ({
         ...ev, startTime: ev.startTime ? new Date(ev.startTime) : null,
       }));
       morningState.weather   = c.weather || null;
       morningState.calendar  = { today: restoreEvs(c.calendar?.today), tomorrow: restoreEvs(c.calendar?.tomorrow) };
+      morningState.calLoaded = !!c.calLoaded;
       morningState.news      = c.news    || null;
       morningState.events    = c.events  || null;
       morningState.reddit    = c.reddit  || null;
@@ -1106,9 +1114,10 @@
       const serEvs = evs => evs.map(ev => ({
         ...ev, startTime: ev.startTime ? ev.startTime.toISOString() : null,
       }));
-      sessionStorage.setItem(MORNING_CACHE_KEY, JSON.stringify({
+      localStorage.setItem(MORNING_CACHE_KEY, JSON.stringify({
         weather:  morningState.weather,
         calendar: { today: serEvs(morningState.calendar.today), tomorrow: serEvs(morningState.calendar.tomorrow) },
+        calLoaded: morningState.calLoaded,
         news:     morningState.news,
         events:   morningState.events,
         reddit:   morningState.reddit,
@@ -1120,38 +1129,108 @@
 
   loadMorningCache();
 
-  // wttr.in reports World Weather Online (WWO) codes (113–395), NOT WMO codes.
-  // Map each to an icon; the human-readable label comes from wttr's own
-  // weatherDesc, so a clear day never renders as a thunderstorm.
-  const WWO_ICONS = {
-    113: '☀️', 116: '🌤️', 119: '☁️', 122: '☁️', 143: '🌫️',
-    176: '🌦️', 179: '🌨️', 182: '🌨️', 185: '🌧️', 200: '⛈️',
-    227: '🌨️', 230: '❄️', 248: '🌫️', 260: '🌫️',
-    263: '🌦️', 266: '🌧️', 281: '🌧️', 284: '🌧️',
-    293: '🌦️', 296: '🌧️', 299: '🌧️', 302: '🌧️', 305: '🌧️', 308: '🌧️',
-    311: '🌧️', 314: '🌧️', 317: '🌨️', 320: '🌨️',
-    323: '🌨️', 326: '🌨️', 329: '❄️', 332: '❄️', 335: '❄️', 338: '❄️',
-    350: '🧊', 353: '🌦️', 356: '🌧️', 359: '🌧️',
-    362: '🌨️', 365: '🌨️', 368: '🌨️', 371: '❄️',
-    374: '🧊', 377: '🧊', 386: '⛈️', 389: '⛈️', 392: '⛈️', 395: '⛈️',
+  // fetch() with a hard timeout. Without it a hung third-party host (public CORS
+  // proxies are the usual culprit) keeps its card on a skeleton indefinitely.
+  async function fetchT(url, opts, ms = 8000) {
+    const ac = new AbortController();
+    const t  = setTimeout(() => ac.abort(), ms);
+    try {
+      return await fetch(url, { ...opts, signal: ac.signal });
+    } catch (e) {
+      throw new Error(e.name === 'AbortError' ? 'Timed out' : 'Network error');
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  // Optional Supabase Edge Function (supabase/functions/morning-proxy) that
+  // fetches server-side for sources without CORS headers: the Google Calendar
+  // iCal feed and RSS feeds. Public CORS proxies keep dying or going paid
+  // (corsproxy.io now answers 401 to non-localhost origins), so this is the
+  // reliable path; the public proxies remain as a fallback when it isn't deployed.
+  function edgeProxyUrl(params) {
+    const base = window.SUPABASE_URL;
+    if (!base || base.startsWith('REPLACE_ME')) return null;
+    return `${base.replace(/\/$/, '')}/functions/v1/morning-proxy?${new URLSearchParams(params)}`;
+  }
+  let edgeProxyMissing = false; // set after a 404 so we stop trying this session
+
+  async function fetchViaEdge(params) {
+    const url = !edgeProxyMissing && edgeProxyUrl(params);
+    if (!url) throw new Error('Proxy not configured');
+    const resp = await fetchT(url, { headers: { apikey: window.SUPABASE_ANON_KEY } });
+    if (resp.status === 404) { edgeProxyMissing = true; throw new Error('Proxy not deployed'); }
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+    return resp.text();
+  }
+
+  // ---- Weather (Open-Meteo: free, no key, CORS-enabled, fast) ----
+  // wttr.in was replaced: it is frequently overloaded and times out, which
+  // Safari surfaces as the opaque "Load failed".
+  const WMO = {
+    0: ['☀️', 'Clear'], 1: ['🌤️', 'Mainly clear'], 2: ['⛅', 'Partly cloudy'], 3: ['☁️', 'Overcast'],
+    45: ['🌫️', 'Fog'], 48: ['🌫️', 'Freezing fog'],
+    51: ['🌦️', 'Light drizzle'], 53: ['🌦️', 'Drizzle'], 55: ['🌧️', 'Heavy drizzle'],
+    56: ['🌧️', 'Freezing drizzle'], 57: ['🌧️', 'Freezing drizzle'],
+    61: ['🌦️', 'Light rain'], 63: ['🌧️', 'Rain'], 65: ['🌧️', 'Heavy rain'],
+    66: ['🧊', 'Freezing rain'], 67: ['🧊', 'Freezing rain'],
+    71: ['🌨️', 'Light snow'], 73: ['🌨️', 'Snow'], 75: ['❄️', 'Heavy snow'], 77: ['🌨️', 'Snow grains'],
+    80: ['🌦️', 'Rain showers'], 81: ['🌧️', 'Rain showers'], 82: ['⛈️', 'Violent showers'],
+    85: ['🌨️', 'Snow showers'], 86: ['❄️', 'Snow showers'],
+    95: ['⛈️', 'Thunderstorm'], 96: ['⛈️', 'Thunderstorm, hail'], 99: ['⛈️', 'Thunderstorm, hail'],
   };
 
-  function weatherInfo(code, desc, hour) {
-    const h = hour !== undefined ? hour : new Date().getHours();
-    const night = h < 6 || h >= 21;
-    let icon = WWO_ICONS[code] || '☁️';
-    if (night && code === 113) icon = '🌙';
-    else if (night && code === 116) icon = '🌛';
-    return { icon, desc: desc || 'Clear' };
+  function weatherInfo(code, isDay) {
+    let [icon, desc] = WMO[code] || ['☁️', 'Cloudy'];
+    if (!isDay && code === 0) icon = '🌙';
+    else if (!isDay && (code === 1 || code === 2)) icon = '🌛';
+    return { icon, desc };
   }
 
   const WEATHER_CITY_KEY = 'habits.weatherCity';
+  const WEATHER_GEO_KEY  = 'habits.weatherGeo'; // { city, lat, lon, name }
+
+  async function geocodeCity(city) {
+    try {
+      const g = JSON.parse(localStorage.getItem(WEATHER_GEO_KEY) || 'null');
+      if (g && g.city === city) return g;
+    } catch { /* refetch */ }
+    const resp = await fetchT(`https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(city)}`);
+    if (!resp.ok) throw new Error(`Weather ${resp.status}`);
+    const hit = (await resp.json()).results?.[0];
+    if (!hit) throw new Error(`City "${city}" not found`);
+    const g = { city, lat: hit.latitude, lon: hit.longitude, name: hit.name };
+    try { localStorage.setItem(WEATHER_GEO_KEY, JSON.stringify(g)); } catch { /* ignore */ }
+    return g;
+  }
 
   async function fetchWeather() {
     const city = localStorage.getItem(WEATHER_CITY_KEY) || 'Paris';
-    const resp = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`);
+    const geo  = await geocodeCity(city);
+    const q = new URLSearchParams({
+      latitude: geo.lat, longitude: geo.lon, timezone: 'auto', forecast_days: 1,
+      current: 'temperature_2m,apparent_temperature,weather_code,wind_speed_10m,is_day',
+      daily:   'temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset',
+    });
+    const resp = await fetchT(`https://api.open-meteo.com/v1/forecast?${q}`);
     if (!resp.ok) throw new Error(`Weather ${resp.status}`);
-    morningState.weather = await resp.json();
+    const d   = await resp.json();
+    const cur = d.current, day = d.daily;
+    // Sunrise/sunset come as local "YYYY-MM-DDTHH:MM" in the city's timezone.
+    const hhmm = s => (s || '').slice(11, 16);
+    morningState.weather = {
+      city:   geo.name,
+      temp:   Math.round(cur.temperature_2m),
+      feels:  Math.round(cur.apparent_temperature),
+      code:   cur.weather_code,
+      isDay:  !!cur.is_day,
+      wind:   Math.round(cur.wind_speed_10m),
+      high:   Math.round(day.temperature_2m_max[0]),
+      low:    Math.round(day.temperature_2m_min[0]),
+      rain:   day.precipitation_sum[0] || 0,
+      sunrise: hhmm(day.sunrise[0]),
+      sunset:  hhmm(day.sunset[0]),
+    };
   }
 
   function parseIcal(text) {
@@ -1199,25 +1278,31 @@
       return (a.startTime || 0) - (b.startTime || 0);
     });
 
-    morningState.calendar = { today: sort(todayEvs), tomorrow: sort(tomorrowEvs) };
+    morningState.calendar  = { today: sort(todayEvs), tomorrow: sort(tomorrowEvs) };
+    morningState.calLoaded = true;
   }
 
-  // corsproxy.io now returns 401 for programmatic requests unless the calling
-  // origin is registered on a (paid) account, which is why the calendar started
-  // failing with a 401. Try it first (it still works for some setups), then fall
-  // back to allorigins, which needs no key. Whichever returns the iCal text wins.
-  async function fetchViaProxies(targetUrl) {
-    const proxies = [
-      u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-      u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    ];
+  // Public CORS proxies, tried in order after the edge function. corsproxy.io
+  // was dropped: it now returns 401 for any non-localhost origin without a paid key.
+  const PUBLIC_PROXIES = [
+    u => `https://api.codetabs.com/v1/proxy/?quest=${encodeURIComponent(u)}`,
+    u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
+  ];
+
+  async function fetchCalendarText(targetUrl) {
+    const valid = t => t && /BEGIN:VCALENDAR/i.test(t);
     let lastErr = null;
-    for (const make of proxies) {
+    try {
+      const t = await fetchViaEdge({ src: 'ical' });
+      if (valid(t)) return t;
+      lastErr = new Error('Unexpected response (not an iCal feed)');
+    } catch (e) { lastErr = e; }
+    for (const make of PUBLIC_PROXIES) {
       try {
-        const resp = await fetch(make(targetUrl));
+        const resp = await fetchT(make(targetUrl));
         if (!resp.ok) { lastErr = new Error(`HTTP ${resp.status}`); continue; }
         const text = await resp.text();
-        if (text && /BEGIN:VCALENDAR/i.test(text)) return text;
+        if (valid(text)) return text;
         lastErr = new Error('Unexpected response (not an iCal feed)');
       } catch (e) { lastErr = e; }
     }
@@ -1229,7 +1314,7 @@
     if (!url || url.startsWith('REPLACE_ME')) return;
     let text;
     try {
-      text = await fetchViaProxies(url);
+      text = await fetchCalendarText(url);
     } catch (err) {
       throw new Error(`iCal fetch failed (${err.message})`);
     }
@@ -1239,11 +1324,11 @@
   // opts: { filter?: (item) => boolean } — filter is applied BEFORE slicing to
   // `count`, so callers get `count` matches (not `count` fetched then filtered).
   async function fetchRSSFeed(rssUrl, count, opts) {
-    // Prefer corsproxy.io (returns raw XML, handles both RSS <item> and Atom
-    // <entry>). Some feeds — e.g. feeds.thelocal.com — get 403'd by the proxy,
-    // so fall back to rss2json (server-side parse to JSON) in that case.
+    // Prefer the edge proxy (raw XML, handles both RSS <item> and Atom <entry>),
+    // then rss2json (server-side parse to JSON). corsproxy.io used to be first
+    // but now always 401s, which cost every feed a wasted round trip.
     try {
-      return await fetchRSSViaProxy(rssUrl, count, opts);
+      return parseRSS(await fetchViaEdge({ url: rssUrl }), count, opts);
     } catch (_) {
       return await fetchRSSViaJson(rssUrl, count, opts);
     }
@@ -1255,15 +1340,12 @@
     return kept.slice(0, count || 5);
   }
 
-  async function fetchRSSViaProxy(rssUrl, count, opts) {
-    const proxy = `https://corsproxy.io/?url=${encodeURIComponent(rssUrl)}`;
-    const resp  = await fetch(proxy);
-    if (!resp.ok) throw new Error(`RSS ${resp.status}`);
-    const xml = await resp.text();
+  function parseRSS(xml, count, opts) {
     const doc = new DOMParser().parseFromString(xml, 'text/xml');
     // RSS 2.0 uses <item>; Atom (e.g. Reddit) uses <entry>. Support both.
     let nodes = [...doc.querySelectorAll('item')];
     if (!nodes.length) nodes = [...doc.querySelectorAll('entry')];
+    if (!nodes.length) throw new Error('RSS parse error');
     const all = nodes.map(el => {
       const text = sel => el.querySelector(sel)?.textContent?.trim() || '';
       // RSS: <link>url</link>. Atom: <link href="url"/>.
@@ -1282,7 +1364,7 @@
 
   async function fetchRSSViaJson(rssUrl, count, opts) {
     const api  = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
-    const resp = await fetch(api);
+    const resp = await fetchT(api);
     if (!resp.ok) throw new Error(`RSS ${resp.status}`);
     const data = await resp.json();
     if (data.status !== 'ok') throw new Error(`RSS ${data.message || 'error'}`);
@@ -1299,135 +1381,164 @@
   }
 
   async function fetchNews() {
-    try {
-      morningState.news = await fetchRSSFeed('https://www.lemonde.fr/rss/une.xml', 5);
-    } catch (err) {
-      morningState.newsErr = err.message;
-    }
+    morningState.news = await fetchRSSFeed('https://www.lemonde.fr/rss/une.xml', 5);
   }
 
   async function fetchBerlinEvents() {
-    try {
-      morningState.events = await fetchRSSFeed('https://feeds.thelocal.com/rss/de', 5);
-    } catch (err) {
-      morningState.eventsErr = err.message;
-    }
+    morningState.events = await fetchRSSFeed('https://feeds.thelocal.com/rss/de', 5);
   }
 
   // HN's Firebase API is CORS-friendly, so no proxy is needed. beststories.json
   // returns ~200 story ids; fetch the item payload for the first `count` in
   // parallel, and fall back to the discussion permalink for self-posts (no url).
   async function fetchHackerNews(count = 5) {
-    try {
-      const idsResp = await fetch('https://hacker-news.firebaseio.com/v0/beststories.json');
-      if (!idsResp.ok) throw new Error(`HN ${idsResp.status}`);
-      const ids = (await idsResp.json()).slice(0, count);
-      const items = await Promise.all(ids.map(async id => {
-        const r = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
-        if (!r.ok) throw new Error(`HN ${r.status}`);
-        const it = await r.json();
-        const d  = it.time ? new Date(it.time * 1000) : null;
-        return {
-          title: it.title || '',
-          link:  it.url || `https://news.ycombinator.com/item?id=${it.id}`,
-          pubDate: d ? d.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '',
-        };
-      }));
-      morningState.hn = items;
-    } catch (err) {
-      morningState.hnErr = err.message;
-    }
+    const idsResp = await fetchT('https://hacker-news.firebaseio.com/v0/beststories.json');
+    if (!idsResp.ok) throw new Error(`HN ${idsResp.status}`);
+    const ids = (await idsResp.json()).slice(0, count);
+    const items = await Promise.all(ids.map(async id => {
+      const r = await fetchT(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
+      if (!r.ok) throw new Error(`HN ${r.status}`);
+      const it = await r.json();
+      const d  = it.time ? new Date(it.time * 1000) : null;
+      return {
+        title: it.title || '',
+        link:  it.url || `https://news.ycombinator.com/item?id=${it.id}`,
+        pubDate: d ? d.toLocaleDateString([], { month: 'short', day: 'numeric' }) : '',
+      };
+    }));
+    morningState.hn = items;
   }
 
   async function fetchReddit() {
-    try {
-      // Skip subreddit meta-posts (stickied megathreads, mod recruitment) — the
-      // author of those is typically a *Mods account, and the title starts with
-      // /r/<sub> or contains "Discussion Thread" / "looking for new moderators".
-      const isMeta = it => {
-        const t = (it.title || '').trim();
-        const a = (it.author || '').trim();
-        if (/^\/?r\//i.test(t)) return true;
-        if (/discussion thread|megathread|looking for new moderators|click here to apply/i.test(t)) return true;
-        if (/\bMods?\b/.test(a)) return true;
-        return false;
-      };
-      morningState.reddit = await fetchRSSFeed(
-        'https://www.reddit.com/r/worldnews/.rss', 5, { filter: it => !isMeta(it) }
-      );
-    } catch (err) {
-      morningState.redditErr = err.message;
+    // Skip subreddit meta-posts (stickied megathreads, mod recruitment) — the
+    // author of those is typically a *Mods account, and the title starts with
+    // /r/<sub> or contains "Discussion Thread" / "looking for new moderators".
+    const isMeta = it => {
+      const t = (it.title || '').trim();
+      const a = (it.author || '').trim();
+      if (/^\/?r\//i.test(t)) return true;
+      if (/discussion thread|megathread|looking for new moderators|click here to apply/i.test(t)) return true;
+      if (/\bMods?\b/.test(a)) return true;
+      return false;
+    };
+    morningState.reddit = await fetchRSSFeed(
+      'https://www.reddit.com/r/worldnews/.rss', 5, { filter: it => !isMeta(it) }
+    );
+  }
+
+  // ---- U7 departures ----
+  // Two public instances of the same hafas-rest-api; v6.bvg.transport.rest has
+  // been answering 500 (its HAFAS upstream is flaky), so try VBB's first and
+  // fall back to BVG's. Same stop IDs, same response shape.
+  const TRANSIT_HOSTS = ['https://v6.vbb.transport.rest', 'https://v6.bvg.transport.rest'];
+  const TRANSIT_STOP_KEY = 'habits.transitStop';
+  const DEFAULT_STOP_ID  = '900078102'; // Rathaus Neukölln U-Bahn (VBB DHID de:11000:900078102)
+
+  async function transitGet(path) {
+    let lastErr = null;
+    for (const host of TRANSIT_HOSTS) {
+      try {
+        const resp = await fetchT(host + path, undefined, 6000);
+        if (resp.ok) return resp.json();
+        lastErr = new Error(`BVG ${resp.status}`);
+      } catch (e) { lastErr = new Error(`BVG ${e.message.toLowerCase()}`); }
     }
+    throw lastErr;
+  }
+
+  // Resolve the stop by name, in case the hard-coded ID is the culprit.
+  async function lookupStopId() {
+    const q = 'query=U%20Rathaus%20Neuk%C3%B6lln&results=1&stops=true&addresses=false&poi=false';
+    const hit = (await transitGet(`/locations?${q}`))?.[0];
+    if (!hit?.id) throw new Error('BVG stop not found');
+    return hit.id;
   }
 
   async function fetchBVGDepartures() {
     const now = new Date();
     const dow = now.getDay(); // 0=Sun, 6=Sat
     if (dow === 0 || dow === 6) { morningState.transit = []; return; }
-    const STOP_ID = '900078102'; // Rathaus Neukölln U-Bahn (VBB DHID de:11000:900078102)
     // Request U-Bahn only. In this API every product flag defaults to true, so
     // `subway=true` alone does NOT exclude buses/trams — at a busy hub those
     // fill the `results` budget and crowd out the U7 departures we want.
     const products = 'subway=true&suburban=false&tram=false&bus=false&ferry=false&express=false&regional=false';
-    const resp = await fetch(
-      `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?duration=90&results=30&${products}`
-    );
-    if (!resp.ok) throw new Error(`BVG ${resp.status}`);
-    const data = await resp.json();
+    const departures = id => transitGet(`/stops/${id}/departures?duration=90&results=30&${products}`);
+    const stopId = localStorage.getItem(TRANSIT_STOP_KEY) || DEFAULT_STOP_ID;
+    let data;
+    try {
+      data = await departures(stopId);
+    } catch (err) {
+      // Both hosts failed for this stop — retry once with a freshly looked-up ID.
+      let fresh;
+      try { fresh = await lookupStopId(); } catch { throw err; }
+      if (fresh === stopId) throw err;
+      data = await departures(fresh);
+      try { localStorage.setItem(TRANSIT_STOP_KEY, fresh); } catch { /* ignore */ }
+    }
     morningState.transit = (data.departures || [])
       .filter(d => d.line?.name?.replace(/\s+/g, '') === 'U7'
                 && d.direction?.toLowerCase().includes('spandau'))
       .slice(0, 3);
   }
 
+  // Record of the Day is stable for the whole day, so cache it per date and
+  // skip the three sequential Discogs requests on every later open.
+  const RECORD_CACHE_KEY = 'habits.record';
+
   async function fetchDiscogsRecord() {
     const username = window.DISCOGS_USERNAME;
     const token    = window.DISCOGS_TOKEN;
     if (!username || username.startsWith('REPLACE_ME') || !token || token.startsWith('REPLACE_ME')) return;
+    try {
+      const c = JSON.parse(localStorage.getItem(RECORD_CACHE_KEY) || 'null');
+      if (c && c.date === todayStr()) { morningState.record = c.record; return; }
+    } catch { /* refetch */ }
     const headers = {
       'Authorization': `Discogs token=${token}`,
       'User-Agent': 'HabitsApp/1.0 +https://julienvarin.github.io/habits/',
     };
     // 1. Get total count
-    const r1 = await fetch(
+    const r1 = await fetchT(
       `https://api.discogs.com/users/${encodeURIComponent(username)}/collection/folders/0/releases?per_page=1&page=1`,
       { headers }
     );
     if (!r1.ok) throw new Error(`Discogs ${r1.status}`);
     const d1    = await r1.json();
     const total = d1.pagination?.items || 0;
-    if (!total) { morningState.record = null; return; }
+    if (!total) { morningState.record = false; return; }
     // 2. Pick today's record (stable for the day)
     const today = new Date();
     const seed  = today.getFullYear() * 10000 + (today.getMonth() + 1) * 100 + today.getDate();
     const idx   = seed % total;
-    const r2    = await fetch(
+    const r2    = await fetchT(
       `https://api.discogs.com/users/${encodeURIComponent(username)}/collection/folders/0/releases?per_page=1&page=${idx + 1}&sort=added&sort_order=asc`,
       { headers }
     );
     if (!r2.ok) throw new Error(`Discogs ${r2.status}`);
     const d2  = await r2.json();
     const rel = d2.releases?.[0];
-    if (!rel) { morningState.record = null; return; }
+    if (!rel) { morningState.record = false; return; }
     const info      = rel.basic_information;
     const releaseId = info.id;
     const notes     = (rel.notes || []).map(n => n.value).filter(Boolean).join(' · ');
-    // 3. Get release details for country
-    let country = '';
-    try {
-      const r3 = await fetch(`https://api.discogs.com/releases/${releaseId}`, { headers });
-      if (r3.ok) { const d3 = await r3.json(); country = d3.country || ''; }
-    } catch { /* country is optional */ }
-    morningState.record = {
+    const record = {
       artist:     (info.artists || []).map(a => a.name.replace(/\s*\(\d+\)$/, '')).join(', ') || 'Unknown',
       title:      info.title,
       year:       info.year,
-      country,
+      country:    '',
       styles:     info.styles?.length ? info.styles : (info.genres || []),
       cover:      info.cover_image || info.thumb || '',
       discogsUrl: `https://www.discogs.com/release/${releaseId}`,
       notes,
     };
+    // Paint now; country (3rd request) is optional and filled in afterwards.
+    morningState.record = record;
+    scheduleMorningRender();
+    try {
+      const r3 = await fetchT(`https://api.discogs.com/releases/${releaseId}`, { headers }, 5000);
+      if (r3.ok) { const d3 = await r3.json(); record.country = d3.country || ''; }
+    } catch { /* country is optional */ }
+    try { localStorage.setItem(RECORD_CACHE_KEY, JSON.stringify({ date: todayStr(), record })); } catch { /* ignore */ }
   }
 
   function buildYearGrid() {
@@ -1514,39 +1625,31 @@
       weatherBody = skelWeather();
     } else {
       const w     = morningState.weather;
-      const cur   = w.current_condition[0];
-      const day   = w.weather[0];
-      const area  = w.nearest_area[0];
-      const city  = area.areaName[0].value;
-      const hour  = new Date().getHours();
-      const wdesc = cur.weatherDesc?.[0]?.value?.trim() || '';
-      const wx    = weatherInfo(parseInt(cur.weatherCode, 10), wdesc, hour);
-      const rain  = day.hourly.reduce((s, h) => s + parseFloat(h.precipMM), 0);
-      const astro = day.astronomy[0];
+      const wx    = weatherInfo(w.code, w.isDay);
       weatherBody = `
         <div class="weather-main">
           <span class="weather-icon">${wx.icon}</span>
           <div>
-            <div class="weather-temp-big">${cur.temp_C}<sup>°C</sup></div>
+            <div class="weather-temp-big">${w.temp}<sup>°C</sup></div>
             <div class="weather-desc">${esc(wx.desc)}</div>
-            ${cur.FeelsLikeC ? `<div class="weather-feels">Feels like ${cur.FeelsLikeC}°</div>` : ''}
+            <div class="weather-feels">Feels like ${w.feels}°</div>
             <button class="weather-location" data-action="change-city" aria-label="Change city">
               <svg class="weather-pin" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
                 <path d="M20 10c0 6-8 12-8 12s-8-6-8-12a8 8 0 0 1 16 0z"/><circle cx="12" cy="10" r="2.5"/>
               </svg>
-              <span class="weather-city">${esc(city)}</span>
+              <span class="weather-city">${esc(w.city)}</span>
             </button>
           </div>
         </div>
         <div class="weather-details">
-          <div class="weather-detail"><span class="wk">High</span><span class="wv">${day.maxtempC}°</span></div>
-          <div class="weather-detail"><span class="wk">Low</span><span class="wv">${day.mintempC}°</span></div>
-          <div class="weather-detail"><span class="wk">Rain</span><span class="wv">${rain > 0 ? rain.toFixed(1) + ' mm' : 'None'}</span></div>
-          <div class="weather-detail"><span class="wk">Wind</span><span class="wv">${cur.windspeedKmph} km/h</span></div>
+          <div class="weather-detail"><span class="wk">High</span><span class="wv">${w.high}°</span></div>
+          <div class="weather-detail"><span class="wk">Low</span><span class="wv">${w.low}°</span></div>
+          <div class="weather-detail"><span class="wk">Rain</span><span class="wv">${w.rain > 0 ? w.rain.toFixed(1) + ' mm' : 'None'}</span></div>
+          <div class="weather-detail"><span class="wk">Wind</span><span class="wv">${w.wind} km/h</span></div>
         </div>
         <div class="weather-sun-row">
-          <span><span class="sun-k">Sunrise</span> ${esc(astro.sunrise)}</span>
-          <span><span class="sun-k">Sunset</span> ${esc(astro.sunset)}</span>
+          <span><span class="sun-k">Sunrise</span> ${esc(w.sunrise)}</span>
+          <span><span class="sun-k">Sunset</span> ${esc(w.sunset)}</span>
         </div>`;
     }
 
@@ -1556,7 +1659,7 @@
       calBody = `<p class="cal-setup-note">Add <code>JULIEN_CALENDAR_ICAL_URL</code> to <code>config.js</code> to connect your calendar.</p>`;
     } else if (morningState.calErr) {
       calBody = `<p class="morning-error">${esc(morningState.calErr)}</p>`;
-    } else if (!morningState.calendar.today.length && !morningState.calendar.tomorrow.length && !morningState.calErr) {
+    } else if (!morningState.calLoaded) {
       calBody = skelLines(['45%','80%','62%','45%','70%']);
     } else {
       function renderDayEvents(evs, label) {
@@ -1701,7 +1804,7 @@
     }
 
     // ---- Freshness / refresh ----
-    const refreshing = !morningState.lastFetched;
+    const refreshing = morningState.refreshing || !morningState.lastFetched;
     const refreshRow = `
       <div class="morning-refresh">
         <span class="morning-updated">${refreshing ? 'Updating…' : `Updated ${formatAgo(morningState.lastFetched)}`}</span>
@@ -1751,48 +1854,65 @@
       </div>`;
   }
 
-  async function initMorningView() {
+  // Coalesce renders: each source repaints its card as soon as it lands
+  // instead of every card waiting for the slowest request.
+  let morningRenderQueued = false;
+  function scheduleMorningRender() {
+    if (morningRenderQueued) return;
+    morningRenderQueued = true;
+    requestAnimationFrame(() => {
+      morningRenderQueued = false;
+      if (state.view === 'morning') renderMorning();
+    });
+  }
+
+  // Stale-while-revalidate: keep showing cached data while refreshing. An
+  // error only replaces a card when there is nothing to show for it.
+  function loadInto(key, fn) {
+    return fn()
+      .then(() => { morningState[key + 'Err'] = null; })
+      .catch(err => {
+        const has = key === 'cal' ? morningState.calLoaded : morningState[key];
+        if (!has) morningState[key + 'Err'] = err.message;
+      })
+      .finally(scheduleMorningRender);
+  }
+
+  let morningInflight = null;
+
+  function initMorningView() {
+    if (morningInflight) { renderMorning(); return morningInflight; }
     const STALE_MS = 30 * 60 * 1000;
     const stale    = !morningState.lastFetched || (Date.now() - morningState.lastFetched > STALE_MS);
 
-    if (stale) {
-      morningState.weather  = null; morningState.weatherErr = null;
-      morningState.news     = null; morningState.newsErr    = null;
-      morningState.events   = null; morningState.eventsErr  = null;
-      morningState.reddit   = null; morningState.redditErr  = null;
-      morningState.hn       = null; morningState.hnErr       = null;
-      morningState.calErr   = null;
-      morningState.calendar = { today: [], tomorrow: [] };
-      morningState.record   = null; morningState.recordErr  = null;
-    }
     // Transit is always refreshed (time-sensitive)
     morningState.transit = null; morningState.transitErr = null;
-
+    morningState.refreshing = stale;
     renderMorning();
 
-    const fetches = [
-      fetchBVGDepartures().catch(err => { morningState.transitErr = err.message; }),
-    ];
+    const fetches = [loadInto('transit', fetchBVGDepartures)];
     if (stale) {
       fetches.push(
-        fetchWeather().catch(err => { morningState.weatherErr = err.message; }),
-        fetchCalendarEvents().catch(err => { morningState.calErr = err.message; }),
-        fetchNews(),
-        fetchBerlinEvents(),
-        fetchReddit(),
-        fetchHackerNews(),
-        fetchDiscogsRecord().catch(err => { morningState.recordErr = err.message; }),
+        loadInto('weather', fetchWeather),
+        loadInto('cal',     fetchCalendarEvents),
+        loadInto('news',    fetchNews),
+        loadInto('events',  fetchBerlinEvents),
+        loadInto('reddit',  fetchReddit),
+        loadInto('hn',      fetchHackerNews),
+        loadInto('record',  fetchDiscogsRecord),
       );
     }
 
-    await Promise.all(fetches);
-
-    if (stale) {
-      morningState.lastFetched = Date.now();
-      saveMorningCache();
-    }
-
-    renderMorning();
+    morningInflight = Promise.all(fetches).then(() => {
+      morningInflight = null;
+      if (stale) {
+        morningState.refreshing  = false;
+        morningState.lastFetched = Date.now();
+        saveMorningCache();
+      }
+      scheduleMorningRender();
+    });
+    return morningInflight;
   }
 
   // ============================================================
@@ -1804,8 +1924,11 @@
     const { action, id, date } = el.dataset;
 
     if (action === 'refresh-morning') {
-      morningState.lastFetched = null;
-      initMorningView();
+      // Wait out any in-flight load (e.g. transit-only), then force a full one.
+      Promise.resolve(morningInflight).then(() => {
+        morningState.lastFetched = null;
+        initMorningView();
+      });
     } else if (action === 'change-city') {
       const current = localStorage.getItem(WEATHER_CITY_KEY) || 'Paris';
       const city = prompt('Change weather city:', current);
@@ -1814,7 +1937,7 @@
         morningState.weather = null;
         morningState.weatherErr = null;
         renderMorning();
-        fetchWeather().catch(err => { morningState.weatherErr = err.message; }).then(() => renderMorning());
+        loadInto('weather', fetchWeather).then(saveMorningCache);
       }
     } else if (action === 'toggle') {
       if (e.target.closest('[data-action="edit"]')) return;
