@@ -124,6 +124,13 @@ language sql stable security definer set search_path = public as $$
 $$;
 grant execute on function is_owner() to authenticated;
 
+-- Signed-in users reach the tables as the `authenticated` role; the policies
+-- below then limit them to allowed_users.
+grant usage on schema public to authenticated;
+grant select, insert, update, delete
+  on habits, entries, todos, journal, push_subscriptions
+  to authenticated;
+
 do $$
 declare t text;
 begin
