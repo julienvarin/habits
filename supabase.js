@@ -78,6 +78,23 @@
     async verifyCode(email, token) {
       saveSession(await authReq("/verify", { type: "email", email, token }));
     },
+    async signInWithPassword(email, password) {
+      saveSession(await authReq("/token?grant_type=password", { email, password }));
+    },
+    // Magic-link fallback: Supabase redirects to the site with the session in
+    // the URL fragment (#access_token=…&refresh_token=…). Returns true if found.
+    consumeRedirect() {
+      const h = new URLSearchParams(location.hash.slice(1));
+      if (!h.get("access_token") || !h.get("refresh_token")) return false;
+      saveSession({
+        access_token: h.get("access_token"),
+        refresh_token: h.get("refresh_token"),
+        expires_at: parseInt(h.get("expires_at"), 10) || undefined,
+        expires_in: parseInt(h.get("expires_in"), 10) || 3600,
+      });
+      history.replaceState(null, "", location.pathname + location.search);
+      return true;
+    },
     async signOut() {
       const token = session?.access_token;
       clearSession();
