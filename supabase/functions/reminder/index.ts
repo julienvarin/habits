@@ -70,12 +70,21 @@ async function vapidKeys(): Promise<{ publicKey: string; privateKey: string }> {
   return { publicKey: again[0].vapid_public, privateKey: again[0].vapid_private };
 }
 
-// Local date (YYYY-MM-DD) and hour in the reminder time zone.
-function localNow(): { day: string; hour: number } {
+// Local date (YYYY-MM-DD), hour and Monday-based weekday (Mon=0 … Sun=6)
+// in the reminder time zone.
+function localNow(): { day: string; hour: number; dow: number } {
   const parts = Object.fromEntries(new Intl.DateTimeFormat('en-CA', {
     timeZone: TZ, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', hourCycle: 'h23',
   }).formatToParts(new Date()).map(p => [p.type, p.value]));
-  return { day: `${parts.year}-${parts.month}-${parts.day}`, hour: parseInt(parts.hour, 10) };
+  const day = `${parts.year}-${parts.month}-${parts.day}`;
+  const dow = (new Date(`${day}T12:00:00Z`).getUTCDay() + 6) % 7;
+  return { day, hour: parseInt(parts.hour, 10), dow };
+}
+
+function addDays(day: string, n: number): string {
+  const d = new Date(`${day}T12:00:00Z`);
+  d.setUTCDate(d.getUTCDate() + n);
+  return d.toISOString().slice(0, 10);
 }
 
 async function sendToAll(payload: Record<string, string>): Promise<{ sent: number; removed: number; failed: string[] }> {
@@ -107,11 +116,30 @@ async function sendToAll(payload: Record<string, string>): Promise<{ sent: numbe
   return { sent, removed, failed };
 }
 
-async function uncheckedHabits(day: string): Promise<string[]> {
-  const habits  = await rest('/habits?select=id,name&archived=eq.false&order=sort_order.asc,created_at.asc');
-  const entries = await rest(`/entries?select=habit_id&date=eq.${day}`);
-  const done = new Set(entries.map((e: { habit_id: string }) => e.habit_id));
-  return habits.filter((h: { id: string }) => !done.has(h.id)).map((h: { name: string }) => h.name);
+type Habit = { id: string; name: string; per_week: number | null };
+
+// Habits still to do today: daily habits not ticked, plus weekly habits
+// (per_week = N) that can no longer hit N this week unless done today.
+async function uncheckedHabits(day: string, dow: number): Promise<string[]> {
+  const habits: Habit[] = await rest('/habits?select=*&archived=eq.false&order=sort_order.asc,created_at.asc');
+  const monday  = addDays(day, -dow);
+  const entries = await rest(`/entries?select=habit_id,date&date=gte.${monday}&date=lte.${day}`);
+  const doneToday = new Set<string>();
+  const weekCount = new Map<string, number>();
+  for (const e of entries as { habit_id: string; date: string }[]) {
+    if (e.date === day) doneToday.add(e.habit_id);
+    weekCount.set(e.habit_id, (weekCount.get(e.habit_id) || 0) + 1);
+  }
+  const left: string[] = [];
+  for (const h of habits) {
+    if (doneToday.has(h.id)) continue;
+    const perWeek = h.per_week && h.per_week >= 1 && h.per_week <= 6 ? h.per_week : null;
+    if (!perWeek) { left.push(h.name); continue; }
+    const needed = perWeek - (weekCount.get(h.id) || 0);
+    const daysLeftAfterToday = 6 - dow;
+    if (needed > daysLeftAfterToday) left.push(`${h.name} (${weekCount.get(h.id) || 0}/${perWeek} this week)`);
+  }
+  return left;
 }
 
 function reminderText(left: string[]): string {
@@ -121,9 +149,9 @@ function reminderText(left: string[]): string {
 }
 
 async function cronRun(req: Request): Promise<Response> {
-  const { day, hour } = localNow();
+  const { day, hour, dow } = localNow();
   if (hour !== HOUR) return json(req, { skipped: `not ${HOUR}:00 in ${TZ}` });
-  const left = await uncheckedHabits(day);
+  const left = await uncheckedHabits(day, dow);
   if (!left.length) return json(req, { skipped: 'all habits done' });
   // Claim today's slot first so overlapping cron runs can't both send.
   const claimed = await rest('/reminder_log', {
@@ -143,7 +171,8 @@ Deno.serve(async (req) => {
     if (action === 'public-key') return json(req, { publicKey: (await vapidKeys()).publicKey });
     if (action === 'test') {
       if (!(await isOwner(req))) return json(req, { error: 'Not signed in' }, 401);
-      const left = await uncheckedHabits(localNow().day);
+      const { day, dow } = localNow();
+      const left = await uncheckedHabits(day, dow);
       const body = left.length ? reminderText(left) : 'All habits done today. Nice!';
       return json(req, await sendToAll({ title: 'Habits (test)', body, tag: 'reminder-test' }));
     }
