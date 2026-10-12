@@ -94,6 +94,8 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 .progress-bar { flex: 1; height: 4px; border-radius: 99px; background: var(--border); overflow: hidden; }
 .progress-fill { height: 100%; border-radius: 99px; background: var(--accent); transition: width 0.4s cubic-bezier(.22,1,.36,1); }
 .progress-label { font-size: 13px; font-weight: 600; color: var(--fg-dim); min-width: 36px; text-align: right; }
+.progress-wrap + .progress-wrap { margin-top: 6px; }
+.progress-name { font-size: 12px; font-weight: 600; color: var(--fg-dim); min-width: 62px; }
 
 /* ============================================================
    TABS
@@ -260,6 +262,24 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
   border-color: color-mix(in srgb, var(--c, #34c759) 40%, transparent);
   background: color-mix(in srgb, var(--c, #34c759) 12%, transparent);
 }
+
+/* Weekly-target chip (habits done N times a week) */
+.card-week-chip {
+  flex-shrink: 0;
+  font-size: 12px; font-weight: 700;
+  color: var(--fg-2);
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 9px; line-height: 1;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.card-week-chip.met {
+  color: #fff; background: var(--c, #34c759); border-color: transparent;
+}
+.card-week-unit { font-weight: 500; }
+@media (max-width: 380px) { .card-week-unit { display: none; } }
 
 /* Embedded calendar (Today cards — 5 week rows x 7 day columns) */
 .card-cal { display: flex; flex-direction: column; gap: 3px; }

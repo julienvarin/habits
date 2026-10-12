@@ -12,6 +12,8 @@ create table if not exists habits (
 
 -- Migration: add section column if table already exists
 alter table habits add column if not exists section text;
+-- Migration: habits done N times a week (Mon–Sun); null = every day.
+alter table habits add column if not exists per_week int check (per_week between 1 and 6);
 
 create table if not exists entries (
   id uuid primary key default gen_random_uuid(),

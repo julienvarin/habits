@@ -175,11 +175,84 @@
   }
 
   function completionRate(habitId, days) {
+    const h = habitById(habitId);
+    if (h && isWeekly(h)) return weeklyRate(h, Math.ceil(days / 7));
     let hits = 0;
     for (let i = 0; i < days; i++) {
       if (hasTick(habitId, fmtDate(shiftDays(new Date(), -i)))) hits++;
     }
     return Math.round((hits / days) * 100);
+  }
+
+  // ---- Weekly habits ----
+  // A habit with per_week = N (1..6) is done N times a week, Monday–Sunday.
+  // Its streak counts weeks in a row that hit N; the week in progress only
+  // extends the streak once it's hit, and never breaks it.
+  function habitById(id) { return state.habits.find(h => h.id === id); }
+  function isWeekly(h) { return !!h && h.per_week >= 1 && h.per_week <= 6; }
+  function mondayOf(d) { const r = new Date(d); r.setHours(0, 0, 0, 0); return shiftDays(r, -((r.getDay() + 6) % 7)); }
+  function weekCount(habitId, monday) {
+    let n = 0;
+    for (let i = 0; i < 7; i++) if (hasTick(habitId, fmtDate(shiftDays(monday, i)))) n++;
+    return n;
+  }
+  function weekMet(h, monday) { return weekCount(h.id, monday) >= h.per_week; }
+
+  function currentWeekStreak(h) {
+    let monday = mondayOf(new Date());
+    let n = 0;
+    if (weekMet(h, monday)) n++;
+    monday = shiftDays(monday, -7);
+    while (weekMet(h, monday)) { n++; monday = shiftDays(monday, -7); }
+    return n;
+  }
+
+  function longestWeekStreak(h) {
+    const dates = tickDates(h.id);
+    if (!dates.length) return 0;
+    let monday = mondayOf(new Date(dates[0] + 'T00:00:00'));
+    const end = mondayOf(new Date());
+    let best = 0, cur = 0;
+    while (monday <= end) {
+      if (weekMet(h, monday)) { cur++; if (cur > best) best = cur; }
+      else if (monday < end) cur = 0; // the week in progress doesn't break it
+      monday = shiftDays(monday, 7);
+    }
+    return best;
+  }
+
+  // Share of the weekly target reached in the week containing `dstr` (0..1).
+  // The week in progress is judged against a pro-rated target, so being at
+  // 1/3 on a Tuesday isn't scored as failing.
+  function weekFraction(h, dstr) {
+    const d = new Date(dstr + 'T00:00:00');
+    const monday = mondayOf(d);
+    const count = weekCount(h.id, monday);
+    const thisMonday = mondayOf(new Date());
+    let target = h.per_week;
+    if (+monday === +thisMonday) {
+      const elapsed = ((new Date().getDay() + 6) % 7) + 1; // Mon=1 … Sun=7
+      target = Math.max(1, Math.ceil(h.per_week * elapsed / 7));
+    }
+    return Math.min(1, count / target);
+  }
+
+  // Mean share of the weekly target over the last `weeks` weeks (incl. this one).
+  function weeklyRate(h, weeks) {
+    let sum = 0, cnt = 0;
+    const created = createdStr(h);
+    for (let w = 0; w < weeks; w++) {
+      const monday = shiftDays(mondayOf(new Date()), -7 * w);
+      if (fmtDate(shiftDays(monday, 6)) < created) break;
+      sum += weekFraction(h, fmtDate(monday)); cnt++;
+    }
+    return cnt ? Math.round((sum / cnt) * 100) : 0;
+  }
+
+  function streakLabel(h) {
+    const streak = isWeekly(h) ? currentWeekStreak(h) : currentStreak(h.id);
+    const unit = isWeekly(h) ? 'w' : '';
+    return { streak, text: `${streak}${unit}` };
   }
 
   // ============================================================
@@ -211,14 +284,29 @@
   function renderProgress() {
     const area = document.getElementById('progress-area');
     if (state.view !== 'today' || state.loading) { area.innerHTML = ''; return; }
-    const total = state.habits.length;
-    const done  = state.habits.filter(h => hasTick(h.id, todayStr())).length;
-    const pct   = total ? Math.round((done / total) * 100) : 0;
-    area.innerHTML = total === 0 ? '' : `
-      <div class="progress-wrap">
-        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-        <span class="progress-label">${done}/${total}</span>
-      </div>`;
+    // Daily habits fill the main bar; weekly ones get their own "This week" bar.
+    const daily  = state.habits.filter(h => !isWeekly(h));
+    const weekly = state.habits.filter(isWeekly);
+    const bar = (done, total, label) => {
+      const pct = total ? Math.round((done / total) * 100) : 0;
+      return `
+        <div class="progress-wrap">
+          ${label ? `<span class="progress-name">${label}</span>` : ''}
+          <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
+          <span class="progress-label">${done}/${total}</span>
+        </div>`;
+    };
+    let html = '';
+    if (daily.length) {
+      html += bar(daily.filter(h => hasTick(h.id, todayStr())).length, daily.length, weekly.length ? 'Today' : '');
+    }
+    if (weekly.length) {
+      const monday = mondayOf(new Date());
+      const done = weekly.reduce((n, h) => n + Math.min(weekCount(h.id, monday), h.per_week), 0);
+      const total = weekly.reduce((n, h) => n + h.per_week, 0);
+      html += bar(done, total, 'This week');
+    }
+    area.innerHTML = html;
   }
 
   // ============================================================
@@ -254,27 +342,36 @@
   }
 
   function buildHabitCard(h, today) {
+    const weekly = isWeekly(h);
     const done   = hasTick(h.id, today);
-    const streak = currentStreak(h.id);
-    const lng    = longestStreak(h.id);
+    const { streak, text: streakText } = streakLabel(h);
+    const lng    = weekly ? longestWeekStreak(h) : longestStreak(h.id);
     const isRecord = streak > 0 && streak >= lng && lng > 0;
+    const unitWord = weekly ? 'week' : 'day';
+    // Weekly habits show progress for the week on screen (week nav offset).
+    const shownMonday = shiftDays(mondayOf(new Date()), -7 * state.todayWeekOffset);
+    const wCount = weekly ? weekCount(h.id, shownMonday) : 0;
+    const wMet   = weekly && wCount >= h.per_week;
 
     return `
-      <div class="habit-card ${done ? 'done' : ''}" style="--c:${h.color}" data-habit-id="${h.id}">
+      <div class="habit-card ${(weekly ? wMet : done) ? 'done' : ''}" style="--c:${h.color}" data-habit-id="${h.id}">
         <div class="card-header">
           <div class="card-drag-handle" aria-label="Drag to reorder">⠿</div>
           <div class="card-color-dot"></div>
           <h2 class="card-name">${esc(h.name)}</h2>
+          ${weekly ? `<span class="card-week-chip${wMet ? ' met' : ''}" title="${h.per_week}× a week">${wCount}/${h.per_week}<span class="card-week-unit"> this week</span></span>` : ''}
           ${streak > 0
             ? `<span class="card-streak-badge${isRecord ? ' record' : ''}"
-                     title="${streak} day${streak===1?'':'s'}${isRecord?' — new record!':''}">${flameIcon(h.color)} ${streak}</span>`
+                     title="${streak} ${unitWord}${streak===1?'':'s'} in a row${isRecord?' — new record!':''}">${flameIcon(h.color)} ${streakText}</span>`
             : ''}
           <button class="card-edit-btn" data-action="edit" data-id="${h.id}" aria-label="Edit ${esc(h.name)}">···</button>
         </div>
 
         ${buildCardCal(h.id, h.color)}
 
-        ${done ? `<div class="card-footer"><span class="completed-tag show">✓ Completed Today</span></div>` : ''}
+        ${weekly
+          ? (wMet ? `<div class="card-footer"><span class="completed-tag show">✓ Done ${state.todayWeekOffset ? 'that' : 'this'} week</span></div>` : '')
+          : (done ? `<div class="card-footer"><span class="completed-tag show">✓ Completed Today</span></div>` : '')}
       </div>`;
   }
 
@@ -563,7 +660,7 @@
     }
 
     function buildHistoryCard(h) {
-      const streak = currentStreak(h.id);
+      const { streak, text: streakText } = streakLabel(h);
       let yearTicks = 0;
       for (const k of state.entries) {
         if (k.startsWith(h.id + '|') && k.slice(h.id.length + 1).startsWith(String(year))) yearTicks++;
@@ -573,7 +670,7 @@
           <div class="history-head">
             <div class="history-swatch"></div>
             <h3>${esc(h.name)}</h3>
-            <span class="history-meta">${yearTicks}d${streak > 0 ? ` · ${flameIcon(h.color)}${streak}` : ''}</span>
+            <span class="history-meta">${yearTicks}d${isWeekly(h) ? ` · ${h.per_week}×/wk` : ''}${streak > 0 ? ` · ${flameIcon(h.color)}${streakText}` : ''}</span>
           </div>
           ${buildYearHeatmap(h.id, h.color)}
         </div>`;
@@ -627,14 +724,20 @@
 
   // Share of the scope completed on a given day (0..1), or null if nothing was
   // active yet. For one habit that's 0/1; for "all" it's done/active habits.
+  // A habit's score for one day: 0/1 for daily habits; for weekly habits the
+  // share of that week's target reached (the same value for each day of it).
+  function habitDayValue(h, dstr) {
+    return isWeekly(h) ? weekFraction(h, dstr) : (hasTick(h.id, dstr) ? 1 : 0);
+  }
+
   function dayFraction(dstr, scope) {
     if (scope) {
       if (dstr < createdStr(scope)) return null;
-      return hasTick(scope.id, dstr) ? 1 : 0;
+      return habitDayValue(scope, dstr);
     }
     let done = 0, active = 0;
     for (const h of state.habits) {
-      if (dstr >= createdStr(h)) { active++; if (hasTick(h.id, dstr)) done++; }
+      if (dstr >= createdStr(h)) { active++; done += habitDayValue(h, dstr); }
     }
     // Journaling counts as one more tracked item in the "all habits" aggregate,
     // active from its first entry onward (see journal.js / journalScore).
@@ -661,11 +764,25 @@
     return first < 0 ? [] : out.slice(first).map(p => ({ ...p, v: p.v ?? 0 }));
   }
 
+  // Weekday rhythm. For a weekly habit it's how often you do it on each
+  // weekday; in the all-habits view only daily habits count (a weekly habit's
+  // score is the same every day of its week, so it says nothing per weekday).
   function weekdayRhythm(scope, days) {
     const sums = new Array(7).fill(0), cnts = new Array(7).fill(0), base = new Date();
+    const dailyOnly = dstr => {
+      let done = 0, active = 0;
+      for (const h of state.habits) {
+        if (isWeekly(h) || dstr < createdStr(h)) continue;
+        active++; if (hasTick(h.id, dstr)) done++;
+      }
+      return active ? done / active : null;
+    };
+    const valueFor = dstr => !scope ? dailyOnly(dstr)
+      : isWeekly(scope) ? (dstr < createdStr(scope) ? null : (hasTick(scope.id, dstr) ? 1 : 0))
+      : dayFraction(dstr, scope);
     for (let i = 0; i < days; i++) {
       const d = shiftDays(base, -i);
-      const f = dayFraction(fmtDate(d), scope);
+      const f = valueFor(fmtDate(d));
       if (f === null) continue;
       const wd = d.getDay();
       sums[wd] += f; cnts[wd]++;
@@ -772,15 +889,30 @@
     const today = todayStr();
     let tiles;
     if (!scope) {
-      const doneToday = state.habits.filter(h => hasTick(h.id, today)).length;
-      const total = state.habits.length;
+      const daily  = state.habits.filter(h => !isWeekly(h));
+      const weekly = state.habits.filter(isWeekly);
+      const doneToday = daily.filter(h => hasTick(h.id, today)).length;
       const r30 = scopeRate(null, 0, 30) ?? 0;
-      const best = Math.max(0, ...state.habits.map(h => longestStreak(h.id)));
+      const best = Math.max(0, ...daily.map(h => longestStreak(h.id)));
       tiles = [
-        [`${doneToday}<span class="stat-sub">/${total}</span>`, 'Done today'],
+        [`${doneToday}<span class="stat-sub">/${daily.length}</span>`, 'Done today'],
         [`${Math.round(r30)}<span class="stat-sub">%</span>`, '30-day rate'],
-        [`${best}<span class="stat-sub">d</span>`, 'Best streak'],
-        [`${state.entries.size}`, 'Total ticks'],
+        [`${best}<span class="stat-sub">d</span>`, 'Best daily streak'],
+      ];
+      if (weekly.length) {
+        const monday = mondayOf(new Date());
+        const wDone = weekly.reduce((n, h) => n + Math.min(weekCount(h.id, monday), h.per_week), 0);
+        const wTotal = weekly.reduce((n, h) => n + h.per_week, 0);
+        tiles.push([`${wDone}<span class="stat-sub">/${wTotal}</span>`, 'Weekly goals']);
+      } else {
+        tiles.push([`${state.entries.size}`, 'Total ticks']);
+      }
+    } else if (isWeekly(scope)) {
+      tiles = [
+        [`${weekCount(scope.id, mondayOf(new Date()))}<span class="stat-sub">/${scope.per_week}</span>`, 'This week'],
+        [`${currentWeekStreak(scope)}<span class="stat-sub">w</span>`, 'Current streak'],
+        [`${longestWeekStreak(scope)}<span class="stat-sub">w</span>`, 'Longest streak'],
+        [`${completionRate(scope.id, 28)}<span class="stat-sub">%</span>`, '4-week rate'],
       ];
     } else {
       tiles = [
@@ -808,7 +940,7 @@
     const trendCard = `
       <div class="stats-card">
         <div class="stats-card-head"><span class="stats-card-title">Consistency</span>${momentum}</div>
-        <div class="stats-card-sub">7-day completion rate · last 8 weeks</div>
+        <div class="stats-card-sub">${scope && isWeekly(scope) ? `Share of the ${scope.per_week}×/week target` : '7-day completion rate'} · last 8 weeks</div>
         ${areaFigure(trend, color)}
       </div>`;
 
@@ -819,7 +951,7 @@
     const rhythmCard = `
       <div class="stats-card">
         <div class="stats-card-head"><span class="stats-card-title">Weekly rhythm</span></div>
-        <div class="stats-card-sub">${anyData ? `Most consistent on <strong>${esc(best.full)}</strong>` : 'Completion rate by weekday'}</div>
+        <div class="stats-card-sub">${anyData ? `${scope && isWeekly(scope) ? 'Most often on' : 'Most consistent on'} <strong>${esc(best.full)}</strong>` : 'Completion rate by weekday'}${!scope && state.habits.some(isWeekly) ? ' · daily habits' : ''}</div>
         ${barsFigure(rhythm, color)}
       </div>`;
 
@@ -850,7 +982,7 @@
         breakdown = `
           <div class="stats-card">
             <div class="stats-card-head"><span class="stats-card-title">By task</span></div>
-            <div class="stats-card-sub">30-day completion · tap a habit to focus</div>
+            <div class="stats-card-sub">30-day completion${state.habits.some(isWeekly) ? ' (weekly habits: share of target)' : ''} · tap a habit to focus</div>
             <div class="stats-rank-list">${rows}</div>
           </div>`;
       }
@@ -931,6 +1063,7 @@
     const isNew = !habit;
     let chosenColor = habit?.color ?? COLORS[state.habits.length % COLORS.length];
     let chosenSection = habit?.section ?? '';
+    let chosenPerWeek = isWeekly(habit) ? habit.per_week : null; // null = daily
     const sections = existingSections();
     const root = document.getElementById('modal-root');
 
@@ -958,6 +1091,12 @@
           <input id="m-section" type="text" maxlength="40"
                  placeholder="e.g. Health, Learning, Mindfulness"
                  value="${esc(chosenSection)}" autocomplete="off" />
+          <label class="field-label">How often</label>
+          <div class="section-pills freq-pills" id="freq-pills">
+            ${[null, 1, 2, 3, 4, 5, 6].map(n => `
+              <button type="button" class="section-pill ${n === chosenPerWeek ? 'active' : ''}"
+                      data-freq="${n ?? ''}">${n ? `${n}×/wk` : 'Daily'}</button>`).join('')}
+          </div>
           <label class="field-label">Color</label>
           <div class="color-grid" id="color-grid">
             ${COLORS.map(c => `
@@ -1004,6 +1143,14 @@
       }
     }, sig);
 
+    root.querySelector('#freq-pills').addEventListener('click', e => {
+      const pill = e.target.closest('[data-freq]');
+      if (!pill) return;
+      chosenPerWeek = pill.dataset.freq ? parseInt(pill.dataset.freq, 10) : null;
+      root.querySelectorAll('#freq-pills [data-freq]').forEach(p =>
+        p.classList.toggle('active', p === pill));
+    }, sig);
+
     root.querySelector('#color-grid').addEventListener('click', e => {
       const sw = e.target.closest('.color-swatch');
       if (!sw) return;
@@ -1026,17 +1173,24 @@
         const section = sectionInput.value.trim() || null;
         if (!name) { input.focus(); input.style.borderColor = 'var(--danger)'; return; }
         try {
+          // Only send per_week when it's set or changing, so habits keep saving
+          // before the per_week column exists (see schema.sql).
+          const freq = (chosenPerWeek || (habit && habit.per_week)) ? { per_week: chosenPerWeek } : {};
           if (isNew) {
-            const h = await db.addHabit(name, chosenColor, state.habits.length, section);
+            const h = await db.addHabit(name, chosenColor, state.habits.length, section, freq);
             state.habits.push(h);
           } else {
-            await db.updateHabit(habit.id, { name, color: chosenColor, section });
+            await db.updateHabit(habit.id, { name, color: chosenColor, section, ...freq });
             const h = state.habits.find(x => x.id === habit.id);
-            if (h) Object.assign(h, { name, color: chosenColor, section });
+            if (h) Object.assign(h, { name, color: chosenColor, section, ...freq });
           }
           closeModal();
           renderAll();
-        } catch (err) { toast('Couldn\'t save: ' + err.message); }
+        } catch (err) {
+          toast(/per_week/.test(err.message)
+            ? 'Run the per_week line from schema.sql in Supabase first'
+            : 'Couldn\'t save: ' + err.message, 4000);
+        }
         return;
       }
 
