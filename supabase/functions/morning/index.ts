@@ -7,6 +7,9 @@
 //
 //   GET /functions/v1/morning?source=ical
 //   GET /functions/v1/morning?source=departures&stop=900078102
+//   GET /functions/v1/morning?source=rss&url=https://www.lemonde.fr/rss/une.xml
+//
+// Callers must be signed in as an allowed user (see is_owner() in schema.sql).
 //
 // Secrets (Supabase dashboard → Edge Functions → Secrets, or `supabase secrets set`):
 //   ICAL_URL         Google Calendar "Secret address in iCal format" (required for ?source=ical)
@@ -15,6 +18,7 @@
 import { createClient } from 'npm:hafas-client@6.3.6';
 import { profile as bvgProfile } from 'npm:hafas-client@6.3.6/p/bvg/index.js';
 import { profile as vbbProfile } from 'npm:hafas-client@6.3.6/p/vbb/index.js';
+import { isOwner } from '../_shared/owner.ts';
 
 const USER_AGENT = 'habits-morning (github.com/julienvarin/habits)';
 const hafasClients = [
@@ -50,6 +54,23 @@ async function handleIcal(req: Request): Promise<Response> {
   if (!/BEGIN:VCALENDAR/i.test(text)) return json(req, { error: 'Calendar response is not an iCal feed' }, 502);
   return new Response(text, {
     headers: { ...corsHeaders(req), 'Content-Type': 'text/calendar; charset=utf-8' },
+  });
+}
+
+// Only these feed hosts can be fetched, so the function isn't an open proxy.
+const RSS_HOSTS = new Set(['www.lemonde.fr', 'feeds.thelocal.com', 'www.reddit.com']);
+
+async function handleRss(req: Request, params: URLSearchParams): Promise<Response> {
+  let url: URL;
+  try { url = new URL(params.get('url') || ''); } catch { return json(req, { error: 'invalid url' }, 400); }
+  if (url.protocol !== 'https:' || !RSS_HOSTS.has(url.hostname)) return json(req, { error: 'feed not allowed' }, 400);
+  const resp = await fetch(url, {
+    headers: { 'User-Agent': USER_AGENT, Accept: 'application/rss+xml, application/atom+xml, application/xml;q=0.9, */*;q=0.8' },
+    signal: AbortSignal.timeout(10000),
+  });
+  if (!resp.ok) return json(req, { error: `Feed HTTP ${resp.status}` }, 502);
+  return new Response(await resp.text(), {
+    headers: { ...corsHeaders(req), 'Content-Type': 'application/xml; charset=utf-8', 'Cache-Control': 'max-age=300' },
   });
 }
 
@@ -92,9 +113,11 @@ Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') return new Response(null, { headers: corsHeaders(req) });
   const params = new URL(req.url).searchParams;
   try {
+    if (!(await isOwner(req))) return json(req, { error: 'Not signed in' }, 401);
     switch (params.get('source')) {
       case 'ical':       return await handleIcal(req);
       case 'departures': return await handleDepartures(req, params);
+      case 'rss':        return await handleRss(req, params);
       default:           return json(req, { error: 'unknown source' }, 400);
     }
   } catch (e) {

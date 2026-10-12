@@ -14,8 +14,17 @@
   <title>Habits</title>
 </head>
 <body>
-  <div id="gate" class="gate">
-    <input id="gate-input" type="password" placeholder="Password" autocomplete="off" />
+  <div id="gate" class="gate" style="display:none">
+    <form id="gate-form" class="gate-form" novalidate>
+      <h1 class="gate-title">Habits</h1>
+      <p id="gate-hint" class="gate-hint">Sign in with your email. We'll send you a 6-digit code.</p>
+      <input id="gate-email" type="email" placeholder="Email" autocomplete="email" inputmode="email" required />
+      <input id="gate-code" type="text" placeholder="6-digit code" autocomplete="one-time-code"
+             inputmode="numeric" pattern="[0-9]*" maxlength="10" style="display:none" />
+      <button id="gate-btn" type="submit" class="gate-btn">Send code</button>
+      <button id="gate-back" type="button" class="gate-link" style="display:none">Use a different email</button>
+      <p id="gate-err" class="gate-err" role="alert"></p>
+    </form>
   </div>
 
   <div id="app" style="display:none">
@@ -55,38 +64,77 @@
 
   <script>
     (function() {
-      var KEY = 'habits.unlocked';
-      if (localStorage.getItem(KEY)) { unlock(); return; }
-      var gate = document.getElementById('gate');
-      var input = document.getElementById('gate-input');
-      gate.style.display = '';
-      input.addEventListener('keydown', function(e) {
-        if (e.key === 'Enter' && input.value === 'go') {
-          localStorage.setItem(KEY, '1');
-          unlock();
-        }
+      // Scripts are inserted with async=false: they download in parallel but
+      // still execute in order.
+      function load(srcs, done) {
+        var left = srcs.length;
+        srcs.forEach(function(src) {
+          var s = document.createElement('script');
+          s.src = src; s.async = false;
+          s.onload = function() { if (--left === 0 && done) done(); };
+          document.body.appendChild(s);
+        });
+      }
+
+      load(['config.js', 'supabase.js'], function() {
+        if (window.auth.isSignedIn()) start(); else showGate();
       });
-      function unlock() {
+
+      function start() {
         document.getElementById('gate').style.display = 'none';
         document.getElementById('app').style.display = '';
-        var s1 = document.createElement('script'); s1.src = 'config.js';
-        s1.onload = function() {
-          var s2 = document.createElement('script'); s2.src = 'supabase.js';
-          s2.onload = function() {
-            var s3 = document.createElement('script'); s3.src = 'todos.js';
-            s3.onload = function() {
-              var s4 = document.createElement('script'); s4.src = 'journal.js';
-              s4.onload = function() {
-                var s5 = document.createElement('script'); s5.src = 'app.js';
-                document.body.appendChild(s5);
-              };
-              document.body.appendChild(s4);
-            };
-            document.body.appendChild(s3);
-          };
-          document.body.appendChild(s2);
-        };
-        document.body.appendChild(s1);
+        load(['todos.js', 'journal.js', 'app.js']);
+        if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function() {});
+      }
+
+      // Session revoked/expired on the server: back to the sign-in screen.
+      window.addEventListener('habits:signedout', function() { location.reload(); });
+
+      function showGate() {
+        var gate  = document.getElementById('gate');
+        var form  = document.getElementById('gate-form');
+        var email = document.getElementById('gate-email');
+        var code  = document.getElementById('gate-code');
+        var btn   = document.getElementById('gate-btn');
+        var back  = document.getElementById('gate-back');
+        var hint  = document.getElementById('gate-hint');
+        var err   = document.getElementById('gate-err');
+        var step  = 'email';
+        gate.style.display = '';
+        email.value = localStorage.getItem('habits.lastEmail') || '';
+
+        function setStep(next) {
+          step = next;
+          code.style.display  = step === 'code' ? '' : 'none';
+          back.style.display  = step === 'code' ? '' : 'none';
+          email.disabled      = step === 'code';
+          btn.textContent     = step === 'code' ? 'Sign in' : 'Send code';
+          hint.textContent    = step === 'code'
+            ? 'Enter the code we emailed to ' + email.value.trim() + '.'
+            : "Sign in with your email. We'll send you a 6-digit code.";
+          (step === 'code' ? code : email).focus();
+        }
+
+        back.addEventListener('click', function() { err.textContent = ''; code.value = ''; setStep('email'); });
+
+        form.addEventListener('submit', function(e) {
+          e.preventDefault();
+          err.textContent = '';
+          var addr = email.value.trim();
+          if (!addr) { err.textContent = 'Enter your email.'; return; }
+          btn.disabled = true;
+          var p = step === 'email'
+            ? window.auth.sendCode(addr).then(function() {
+                localStorage.setItem('habits.lastEmail', addr);
+                setStep('code');
+              })
+            : window.auth.verifyCode(addr, code.value.replace(/\s/g, '')).then(start);
+          p.catch(function(ex) {
+            err.textContent = step === 'email' && /signups not allowed|not found/i.test(ex.message)
+              ? 'This email has no account.'
+              : ex.message;
+          }).then(function() { btn.disabled = false; });
+        });
       }
     })();
   </script>

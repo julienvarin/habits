@@ -5,7 +5,7 @@ window.SUPABASE_ANON_KEY = "REPLACE_ME_WITH_YOUR_ANON_KEY";
 
 // Google Calendar (Morning tab) is no longer configured here: the secret iCal
 // URL lives on the Supabase `morning` function as the ICAL_URL secret, so it
-// isn't published with the site. See README → "Morning tab function".
+// isn't published with the site. See README → "Supabase functions".
 
 // Optional: Discogs integration — Record of the Day (Morning tab).
 // Token: discogs.com → Settings → Developers → Generate new token

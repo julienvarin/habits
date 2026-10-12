@@ -2,6 +2,10 @@
 project_id = "habits"
 
 [functions.morning]
-# Called from the browser without a user session; the function only serves
-# the calendar feed and U-Bahn departures.
+# The function checks the caller's session itself (is_owner()), so the
+# gateway check is off; it also wouldn't accept non-JWT publishable keys.
+verify_jwt = false
+
+[functions.reminder]
+# Called by pg_cron without a user session; see the function header.
 verify_jwt = false

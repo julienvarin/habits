@@ -34,19 +34,33 @@ body {
 button { font-family: var(--font); color: inherit; background: none; border: 0; cursor: pointer; }
 
 /* ============================================================
-   PASSWORD GATE
+   SIGN-IN GATE
 ============================================================ */
 .gate {
   display: flex; align-items: center; justify-content: center;
   min-height: 100vh; padding: 24px;
 }
+.gate-form {
+  width: 100%; max-width: 320px;
+  display: flex; flex-direction: column; gap: 12px;
+}
+.gate-title { font: 700 28px/1.2 var(--font); color: var(--fg); text-align: center; }
+.gate-hint  { font: 400 15px/1.4 var(--font); color: var(--fg-dim); text-align: center; margin-bottom: 4px; }
 .gate input {
-  width: 200px; padding: 14px; border-radius: var(--radius);
+  width: 100%; padding: 14px; border-radius: var(--radius);
   background: var(--bg-card); border: 1.5px solid var(--border);
   color: var(--fg); font: 600 17px/1.3 var(--font);
   text-align: center; box-shadow: var(--shadow-sm);
 }
 .gate input:focus { outline: none; border-color: var(--accent); }
+.gate input:disabled { color: var(--fg-dim); }
+.gate-btn {
+  padding: 14px; border: 0; border-radius: var(--radius);
+  background: var(--accent); color: #fff; font: 600 17px/1.3 var(--font);
+}
+.gate-btn:disabled { opacity: 0.5; }
+.gate-link { background: none; border: 0; color: var(--fg-dim); font: 500 15px/1.3 var(--font); }
+.gate-err { min-height: 1.3em; color: var(--danger); font: 500 14px/1.3 var(--font); text-align: center; }
 
 /* ============================================================
    APP SHELL
@@ -535,6 +549,14 @@ button { font-family: var(--font); color: inherit; background: none; border: 0; 
 .stats-card-title { font-size: 15px; font-weight: 650; letter-spacing: -0.014em; color: var(--fg); }
 .stats-card-sub { font-size: 12px; color: var(--fg-dim); margin-top: 3px; }
 .stats-card-sub strong { color: var(--fg-2); font-weight: 650; }
+.settings-row { display: flex; gap: 8px; margin-top: 12px; }
+.settings-btn {
+  padding: 9px 16px; border-radius: var(--radius-sm);
+  border: 1px solid var(--border); background: var(--bg-card2);
+  color: var(--fg); font: 600 14px/1.2 var(--font);
+}
+.settings-btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.settings-btn:disabled { opacity: 0.5; }
 .viz-delta { font-size: 12px; font-weight: 600; font-variant-numeric: tabular-nums; }
 .viz-delta.up   { color: #1a7a32; }
 .viz-delta.down { color: #c0392b; }
