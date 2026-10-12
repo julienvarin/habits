@@ -1254,7 +1254,10 @@
     }
     const reg  = await navigator.serviceWorker.ready;
     const resp = await fetch(reminderFnUrl('public-key'), { signal: AbortSignal.timeout(15000) });
-    if (!resp.ok) throw new Error(`Reminder setup failed (HTTP ${resp.status})`);
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      throw new Error(`Reminder setup failed: ${body.error || body.message || `HTTP ${resp.status}`}`);
+    }
     const { publicKey } = await resp.json();
     const sub  = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(publicKey) });
     const json = sub.toJSON();
