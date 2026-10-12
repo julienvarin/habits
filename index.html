@@ -21,8 +21,10 @@
       <input id="gate-email" type="email" placeholder="Email" autocomplete="email" inputmode="email" required />
       <input id="gate-code" type="text" placeholder="6-digit code" autocomplete="one-time-code"
              inputmode="numeric" pattern="[0-9]*" maxlength="10" style="display:none" />
+      <input id="gate-password" type="password" placeholder="Password" autocomplete="current-password" style="display:none" />
       <button id="gate-btn" type="submit" class="gate-btn">Send code</button>
       <button id="gate-back" type="button" class="gate-link" style="display:none">Use a different email</button>
+      <button id="gate-mode" type="button" class="gate-link">Use password instead</button>
       <p id="gate-err" class="gate-err" role="alert"></p>
     </form>
   </div>
@@ -77,6 +79,7 @@
       }
 
       load(['config.js', 'supabase.js'], function() {
+        window.auth.consumeRedirect();
         if (window.auth.isSignedIn()) start(); else showGate();
       });
 
@@ -98,6 +101,8 @@
         var btn   = document.getElementById('gate-btn');
         var back  = document.getElementById('gate-back');
         var hint  = document.getElementById('gate-hint');
+        var pass  = document.getElementById('gate-password');
+        var mode  = document.getElementById('gate-mode');
         var err   = document.getElementById('gate-err');
         var step  = 'email';
         gate.style.display = '';
@@ -106,14 +111,19 @@
         function setStep(next) {
           step = next;
           code.style.display  = step === 'code' ? '' : 'none';
+          pass.style.display  = step === 'password' ? '' : 'none';
           back.style.display  = step === 'code' ? '' : 'none';
+          mode.style.display  = step === 'code' ? 'none' : '';
+          mode.textContent    = step === 'password' ? 'Email me a code instead' : 'Use password instead';
           email.disabled      = step === 'code';
-          btn.textContent     = step === 'code' ? 'Sign in' : 'Send code';
-          hint.textContent    = step === 'code'
-            ? 'Enter the code we emailed to ' + email.value.trim() + '.'
+          btn.textContent     = step === 'email' ? 'Send code' : 'Sign in';
+          hint.textContent    = step === 'code' ? 'Enter the code we emailed to ' + email.value.trim() + '.'
+            : step === 'password' ? 'Sign in with your email and password.'
             : "Sign in with your email. We'll send you a 6-digit code.";
-          (step === 'code' ? code : email).focus();
+          (step === 'code' ? code : step === 'password' && email.value ? pass : email).focus();
         }
+
+        mode.addEventListener('click', function() { err.textContent = ''; setStep(step === 'password' ? 'email' : 'password'); });
 
         back.addEventListener('click', function() { err.textContent = ''; code.value = ''; setStep('email'); });
 
@@ -123,16 +133,18 @@
           var addr = email.value.trim();
           if (!addr) { err.textContent = 'Enter your email.'; return; }
           btn.disabled = true;
+          localStorage.setItem('habits.lastEmail', addr);
           var p = step === 'email'
-            ? window.auth.sendCode(addr).then(function() {
-                localStorage.setItem('habits.lastEmail', addr);
-                setStep('code');
-              })
-            : window.auth.verifyCode(addr, code.value.replace(/\s/g, '')).then(start);
+            ? window.auth.sendCode(addr).then(function() { setStep('code'); })
+            : step === 'password'
+              ? window.auth.signInWithPassword(addr, pass.value).then(start)
+              : window.auth.verifyCode(addr, code.value.replace(/\s/g, '')).then(start);
           p.catch(function(ex) {
             err.textContent = step === 'email' && /signups not allowed|not found/i.test(ex.message)
               ? 'This email has no account.'
-              : ex.message;
+              : /rate limit/i.test(ex.message)
+                ? 'Too many emails sent (Supabase allows a few per hour). Use your password instead, or try again later.'
+                : ex.message;
           }).then(function() { btn.disabled = false; });
         });
       }
