@@ -28,8 +28,6 @@ alter table entries enable row level security;
 
 drop policy if exists "anon all" on habits;
 drop policy if exists "anon all" on entries;
-create policy "anon all" on habits for all to anon using (true) with check (true);
-create policy "anon all" on entries for all to anon using (true) with check (true);
 
 create table if not exists todos (
   id text primary key,
@@ -58,7 +56,6 @@ create index if not exists todos_done_created_idx on todos(done, created_at desc
 
 alter table todos enable row level security;
 drop policy if exists "anon all" on todos;
-create policy "anon all" on todos for all to anon using (true) with check (true);
 
 -- One journal entry per day. "day_text" is the short note about the day;
 -- "learnt_text" is the things-I-learnt section. A day counts toward the
@@ -82,4 +79,57 @@ create index if not exists journal_date_idx on journal(date desc);
 
 alter table journal enable row level security;
 drop policy if exists "anon all" on journal;
-create policy "anon all" on journal for all to anon using (true) with check (true);
+
+
+-- Web Push subscriptions for the daily reminder (one row per device).
+create table if not exists push_subscriptions (
+  endpoint text primary key,
+  p256dh text not null,
+  auth text not null,
+  created_at timestamptz not null default now()
+);
+alter table push_subscriptions enable row level security;
+
+-- Used only by the `reminder` Edge Function (service role); no API access.
+-- VAPID keys are generated on first use; sent_on stops duplicate reminders.
+create table if not exists push_config (
+  id int primary key default 1 check (id = 1),
+  vapid_public text not null,
+  vapid_private text not null
+);
+create table if not exists reminder_log (
+  day date primary key,
+  sent_at timestamptz not null default now()
+);
+alter table push_config enable row level security;
+alter table reminder_log enable row level security;
+
+-- ============================================================
+-- Access: only the owner's account can read or write.
+-- ============================================================
+-- Emails allowed to use the app. Add yours once (SQL editor, not in this file):
+--   insert into allowed_users (email) values ('you@example.com');
+create table if not exists allowed_users (
+  email text primary key
+);
+alter table allowed_users enable row level security;
+-- No policies on allowed_users: nobody can read or change it through the API.
+
+create or replace function is_owner() returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from allowed_users
+    where lower(email) = lower(coalesce(auth.jwt() ->> 'email', ''))
+  );
+$$;
+grant execute on function is_owner() to authenticated;
+
+do $$
+declare t text;
+begin
+  foreach t in array array['habits', 'entries', 'todos', 'journal', 'push_subscriptions'] loop
+    execute format('drop policy if exists "anon all" on %I', t);
+    execute format('drop policy if exists "owner all" on %I', t);
+    execute format('create policy "owner all" on %I for all to authenticated using (is_owner()) with check (is_owner())', t);
+  end loop;
+end $$;

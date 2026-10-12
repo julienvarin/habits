@@ -856,7 +856,7 @@
       }
     }
 
-    root.innerHTML = pills + overview + trendCard + rhythmCard + breakdown + historyBlock(scope);
+    root.innerHTML = pills + overview + trendCard + rhythmCard + breakdown + historyBlock(scope) + settingsCard();
     wireStatsCharts(root);
   }
 
@@ -1066,6 +1066,121 @@
   }
 
   // ============================================================
+  // Settings (bottom of Stats): daily reminder + sign out
+  // ============================================================
+  // reminderState: 'unknown' | 'unsupported' | 'off' | 'on' | 'busy'
+  let reminderState = 'unknown';
+
+  function pushSupported() {
+    return 'serviceWorker' in navigator && 'PushManager' in window && 'Notification' in window;
+  }
+
+  async function refreshReminderState() {
+    if (!pushSupported()) { reminderState = 'unsupported'; return; }
+    try {
+      const reg = await navigator.serviceWorker.ready;
+      reminderState = (await reg.pushManager.getSubscription()) ? 'on' : 'off';
+    } catch { reminderState = 'off'; }
+  }
+
+  function reminderFnUrl(action) {
+    const base = window.SUPABASE_URL;
+    return `${base}/functions/v1/reminder${action ? `?action=${action}` : ''}`;
+  }
+
+  function b64urlToBytes(b64) {
+    const pad = '='.repeat((4 - b64.length % 4) % 4);
+    const raw = atob((b64 + pad).replace(/-/g, '+').replace(/_/g, '/'));
+    return Uint8Array.from(raw, c => c.charCodeAt(0));
+  }
+
+  async function enableReminder() {
+    if (await Notification.requestPermission() !== 'granted') {
+      throw new Error('Notifications are blocked. Allow them for Habits in Settings → Notifications.');
+    }
+    const reg  = await navigator.serviceWorker.ready;
+    const resp = await fetch(reminderFnUrl('public-key'), { signal: AbortSignal.timeout(15000) });
+    if (!resp.ok) throw new Error(`Reminder setup failed (HTTP ${resp.status})`);
+    const { publicKey } = await resp.json();
+    const sub  = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: b64urlToBytes(publicKey) });
+    const json = sub.toJSON();
+    await window.db.savePushSubscription({ endpoint: json.endpoint, p256dh: json.keys.p256dh, auth: json.keys.auth });
+  }
+
+  async function disableReminder() {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (!sub) return;
+    await window.db.deletePushSubscription(sub.endpoint).catch(() => {});
+    await sub.unsubscribe();
+  }
+
+  async function testReminder() {
+    const resp = await fetch(reminderFnUrl('test'), {
+      method: 'POST', headers: await window.auth.headers(), signal: AbortSignal.timeout(20000),
+    });
+    const body = await resp.json().catch(() => ({}));
+    if (!resp.ok) throw new Error(body.error || `HTTP ${resp.status}`);
+    if (!body.sent) throw new Error(body.failed?.[0] || 'No device is subscribed');
+  }
+
+  function settingsCard() {
+    if (reminderState === 'unknown') refreshReminderState().then(renderStats);
+    let reminder;
+    if (reminderState === 'unsupported') {
+      reminder = `<div class="stats-card-sub">To get reminders on iPhone, add Habits to your Home Screen (Share → Add to Home Screen) and open it from there.</div>`;
+    } else {
+      const on   = reminderState === 'on';
+      const busy = reminderState === 'busy' || reminderState === 'unknown';
+      reminder = `
+        <div class="stats-card-sub">A notification at 23:00 if some habits aren't ticked yet.</div>
+        <div class="settings-row">
+          <button class="settings-btn${on ? '' : ' primary'}" data-action="reminder-toggle" ${busy ? 'disabled' : ''}>
+            ${busy ? '…' : on ? 'Turn off' : 'Turn on'}
+          </button>
+          ${on ? `<button class="settings-btn" data-action="reminder-test">Send test</button>` : ''}
+        </div>`;
+    }
+    const email = window.auth.email();
+    return `
+      <div class="stats-card">
+        <div class="stats-card-head"><span class="stats-card-title">Daily reminder</span></div>
+        ${reminder}
+      </div>
+      <div class="stats-card">
+        <div class="stats-card-head"><span class="stats-card-title">Account</span></div>
+        <div class="stats-card-sub">${email ? `Signed in as ${esc(email)}` : 'Signed in'}</div>
+        <div class="settings-row">
+          <button class="settings-btn" data-action="sign-out">Sign out</button>
+        </div>
+      </div>`;
+  }
+
+  async function handleSettingsAction(action) {
+    if (action === 'reminder-toggle') {
+      const wasOn = reminderState === 'on';
+      reminderState = 'busy'; renderStats();
+      try {
+        if (wasOn) { await disableReminder(); toast('Reminder off'); }
+        else { await enableReminder(); toast('Reminder on for 23:00'); }
+      } catch (err) {
+        toast(err.message, 4000);
+      }
+      await refreshReminderState();
+      renderStats();
+    } else if (action === 'reminder-test') {
+      try { await testReminder(); toast('Test sent'); }
+      catch (err) { toast(`Test failed: ${err.message}`, 4000); }
+    } else if (action === 'sign-out') {
+      if (!confirm('Sign out of Habits on this device?')) return;
+      if (reminderState === 'on') await disableReminder().catch(() => {});
+      await window.auth.signOut();
+      try { localStorage.removeItem(MORNING_CACHE_KEY); } catch { /* ignore */ }
+      location.reload();
+    }
+  }
+
+  // ============================================================
   // Morning view
   // ============================================================
   const morningState = {
@@ -1076,16 +1191,19 @@
     reddit: null, redditErr: null,
     hn: null, hnErr: null,
     transit: null, transitErr: null,
-    record: null, recordErr: null,
+    record: null, recordErr: null, recordDate: null,
+    calLoaded: false,
+    refreshing: false,
     lastFetched: null,
   };
 
-  // Persist calendar/news/events across page reloads (within the tab session)
-  const MORNING_CACHE_KEY = 'habits.morning.v1';
+  // Persist the Morning data across launches so the tab paints instantly with
+  // the last good data, then refreshes in the background.
+  const MORNING_CACHE_KEY = 'habits.morning.v2';
 
   function loadMorningCache() {
     try {
-      const raw = sessionStorage.getItem(MORNING_CACHE_KEY);
+      const raw = localStorage.getItem(MORNING_CACHE_KEY);
       if (!raw) return;
       const c = JSON.parse(raw);
       const restoreEvs = evs => (evs || []).map(ev => ({
@@ -1097,7 +1215,16 @@
       morningState.events    = c.events  || null;
       morningState.reddit    = c.reddit  || null;
       morningState.hn        = c.hn      || null;
+      morningState.record    = c.record  || null;
+      morningState.recordDate = c.recordDate || null;
+      morningState.calLoaded = !!c.calLoaded;
       morningState.lastFetched = c.lastFetched || null;
+      // Yesterday's "today" events are wrong today; refetch instead of showing them.
+      if (c.day !== todayStr()) {
+        morningState.calendar = { today: [], tomorrow: [] };
+        morningState.calLoaded = false;
+        morningState.lastFetched = null;
+      }
     } catch { /* ignore corrupt cache */ }
   }
 
@@ -1106,13 +1233,17 @@
       const serEvs = evs => evs.map(ev => ({
         ...ev, startTime: ev.startTime ? ev.startTime.toISOString() : null,
       }));
-      sessionStorage.setItem(MORNING_CACHE_KEY, JSON.stringify({
+      localStorage.setItem(MORNING_CACHE_KEY, JSON.stringify({
+        day:      todayStr(),
         weather:  morningState.weather,
         calendar: { today: serEvs(morningState.calendar.today), tomorrow: serEvs(morningState.calendar.tomorrow) },
         news:     morningState.news,
         events:   morningState.events,
         reddit:   morningState.reddit,
         hn:       morningState.hn,
+        record:   morningState.record,
+        recordDate: morningState.recordDate,
+        calLoaded: morningState.calLoaded,
         lastFetched: morningState.lastFetched,
       }));
     } catch { /* ignore quota errors */ }
@@ -1276,7 +1407,7 @@
     if (!url) { morningState.calNotConfigured = true; return; }
     let resp;
     try {
-      resp = await fetch(url, { signal: AbortSignal.timeout(20000) });
+      resp = await fetch(url, { headers: await window.auth.headers(), signal: AbortSignal.timeout(20000) });
     } catch (err) {
       throw new Error(`Calendar unreachable (${err.message})`);
     }
@@ -1288,16 +1419,17 @@
     }
     morningState.calNotConfigured = false;
     parseIcal(await resp.text());
+    morningState.calLoaded = true;
   }
 
   // opts: { filter?: (item) => boolean } — filter is applied BEFORE slicing to
   // `count`, so callers get `count` matches (not `count` fetched then filtered).
   async function fetchRSSFeed(rssUrl, count, opts) {
-    // Prefer corsproxy.io (returns raw XML, handles both RSS <item> and Atom
-    // <entry>). Some feeds — e.g. feeds.thelocal.com — get 403'd by the proxy,
-    // so fall back to rss2json (server-side parse to JSON) in that case.
+    // Prefer the Supabase function (raw XML, handles both RSS <item> and Atom
+    // <entry>); fall back to rss2json (server-side parse to JSON), e.g. when
+    // Reddit rate-limits the function's cloud IP.
     try {
-      return await fetchRSSViaProxy(rssUrl, count, opts);
+      return await fetchRSSViaFunction(rssUrl, count, opts);
     } catch (_) {
       return await fetchRSSViaJson(rssUrl, count, opts);
     }
@@ -1309,9 +1441,10 @@
     return kept.slice(0, count || 5);
   }
 
-  async function fetchRSSViaProxy(rssUrl, count, opts) {
-    const proxy = `https://corsproxy.io/?url=${encodeURIComponent(rssUrl)}`;
-    const resp  = await fetch(proxy);
+  async function fetchRSSViaFunction(rssUrl, count, opts) {
+    const url = morningFnUrl({ source: 'rss', url: rssUrl });
+    if (!url) throw new Error('No Supabase function');
+    const resp = await fetch(url, { headers: await window.auth.headers(), signal: AbortSignal.timeout(10000) });
     if (!resp.ok) throw new Error(`RSS ${resp.status}`);
     const xml = await resp.text();
     const doc = new DOMParser().parseFromString(xml, 'text/xml');
@@ -1336,7 +1469,7 @@
 
   async function fetchRSSViaJson(rssUrl, count, opts) {
     const api  = `https://api.rss2json.com/v1/api.json?rss_url=${encodeURIComponent(rssUrl)}`;
-    const resp = await fetch(api);
+    const resp = await fetch(api, { signal: AbortSignal.timeout(10000) });
     if (!resp.ok) throw new Error(`RSS ${resp.status}`);
     const data = await resp.json();
     if (data.status !== 'ok') throw new Error(`RSS ${data.message || 'error'}`);
@@ -1373,11 +1506,11 @@
   // parallel, and fall back to the discussion permalink for self-posts (no url).
   async function fetchHackerNews(count = 5) {
     try {
-      const idsResp = await fetch('https://hacker-news.firebaseio.com/v0/beststories.json');
+      const idsResp = await fetch('https://hacker-news.firebaseio.com/v0/beststories.json', { signal: AbortSignal.timeout(8000) });
       if (!idsResp.ok) throw new Error(`HN ${idsResp.status}`);
       const ids = (await idsResp.json()).slice(0, count);
       const items = await Promise.all(ids.map(async id => {
-        const r = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`);
+        const r = await fetch(`https://hacker-news.firebaseio.com/v0/item/${id}.json`, { signal: AbortSignal.timeout(8000) });
         if (!r.ok) throw new Error(`HN ${r.status}`);
         const it = await r.json();
         const d  = it.time ? new Date(it.time * 1000) : null;
@@ -1425,14 +1558,15 @@
     const products = 'subway=true&suburban=false&tram=false&bus=false&ferry=false&express=false&regional=false';
     // Prefer the Supabase function (talks to BVG/VBB HAFAS directly); fall back
     // to the public transport.rest wrapper, which is often down (503).
+    const fnUrl = morningFnUrl({ source: 'departures', stop: STOP_ID, duration: '90', results: '30' });
     const sources = [
-      morningFnUrl({ source: 'departures', stop: STOP_ID, duration: '90', results: '30' }),
-      `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?duration=90&results=30&${products}`,
+      fnUrl && { url: fnUrl, headers: await window.auth.headers() },
+      { url: `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?duration=90&results=30&${products}`, headers: {} },
     ].filter(Boolean);
     let data = null, lastErr = null;
-    for (const url of sources) {
+    for (const { url, headers } of sources) {
       try {
-        const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        const resp = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
         if (!resp.ok) { lastErr = new Error(`BVG ${resp.status}`); continue; }
         data = await resp.json();
         break;
@@ -1449,14 +1583,17 @@
     const username = window.DISCOGS_USERNAME;
     const token    = window.DISCOGS_TOKEN;
     if (!username || username.startsWith('REPLACE_ME') || !token || token.startsWith('REPLACE_ME')) return;
+    // The record is stable for the day, so a cached one from today is final.
+    if (morningState.record && morningState.recordDate === todayStr()) return;
     const headers = {
       'Authorization': `Discogs token=${token}`,
       'User-Agent': 'HabitsApp/1.0 +https://julienvarin.github.io/habits/',
     };
+    const signal = () => AbortSignal.timeout(10000);
     // 1. Get total count
     const r1 = await fetch(
       `https://api.discogs.com/users/${encodeURIComponent(username)}/collection/folders/0/releases?per_page=1&page=1`,
-      { headers }
+      { headers, signal: signal() }
     );
     if (!r1.ok) throw new Error(`Discogs ${r1.status}`);
     const d1    = await r1.json();
@@ -1468,7 +1605,7 @@
     const idx   = seed % total;
     const r2    = await fetch(
       `https://api.discogs.com/users/${encodeURIComponent(username)}/collection/folders/0/releases?per_page=1&page=${idx + 1}&sort=added&sort_order=asc`,
-      { headers }
+      { headers, signal: signal() }
     );
     if (!r2.ok) throw new Error(`Discogs ${r2.status}`);
     const d2  = await r2.json();
@@ -1480,7 +1617,7 @@
     // 3. Get release details for country
     let country = '';
     try {
-      const r3 = await fetch(`https://api.discogs.com/releases/${releaseId}`, { headers });
+      const r3 = await fetch(`https://api.discogs.com/releases/${releaseId}`, { headers, signal: signal() });
       if (r3.ok) { const d3 = await r3.json(); country = d3.country || ''; }
     } catch { /* country is optional */ }
     morningState.record = {
@@ -1493,6 +1630,7 @@
       discogsUrl: `https://www.discogs.com/release/${releaseId}`,
       notes,
     };
+    morningState.recordDate = todayStr();
   }
 
   function buildYearGrid() {
@@ -1621,7 +1759,7 @@
       calBody = `<p class="cal-setup-note">Set the <code>ICAL_URL</code> secret on the Supabase <code>morning</code> function to connect your calendar.</p>`;
     } else if (morningState.calErr) {
       calBody = `<p class="morning-error">${esc(morningState.calErr)}</p>`;
-    } else if (!morningState.calendar.today.length && !morningState.calendar.tomorrow.length && !morningState.calErr) {
+    } else if (!morningState.calLoaded) {
       calBody = skelLines(['45%','80%','62%','45%','70%']);
     } else {
       function renderDayEvents(evs, label) {
@@ -1766,10 +1904,10 @@
     }
 
     // ---- Freshness / refresh ----
-    const refreshing = !morningState.lastFetched;
+    const refreshing = morningState.refreshing || !morningState.lastFetched;
     const refreshRow = `
       <div class="morning-refresh">
-        <span class="morning-updated">${refreshing ? 'Updating…' : `Updated ${formatAgo(morningState.lastFetched)}`}</span>
+        <span class="morning-updated">${refreshing ? 'Updating…' : `Updated ${formatAgo(morningState.lastFetched)}`}${morningState.outdated?.length ? ` · ${esc(morningState.outdated.join(', '))} outdated` : ''}</span>
         <button class="morning-refresh-btn${refreshing ? ' spinning' : ''}" data-action="refresh-morning" aria-label="Refresh" ${refreshing ? 'disabled' : ''}>
           <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
             <path d="M21 12a9 9 0 1 1-2.64-6.36"/><path d="M21 3v6h-6"/>
@@ -1816,47 +1954,64 @@
       </div>`;
   }
 
+  let morningRenderQueued = false;
+  function queueMorningRender() {
+    if (morningRenderQueued) return;
+    morningRenderQueued = true;
+    requestAnimationFrame(() => { morningRenderQueued = false; renderMorning(); });
+  }
+
   async function initMorningView() {
+    if (morningState.refreshing) return;
     const STALE_MS = 30 * 60 * 1000;
     const stale    = !morningState.lastFetched || (Date.now() - morningState.lastFetched > STALE_MS);
 
-    if (stale) {
-      morningState.weather  = null; morningState.weatherErr = null;
-      morningState.news     = null; morningState.newsErr    = null;
-      morningState.events   = null; morningState.eventsErr  = null;
-      morningState.reddit   = null; morningState.redditErr  = null;
-      morningState.hn       = null; morningState.hnErr       = null;
-      morningState.calErr   = null;
-      morningState.calendar = { today: [], tomorrow: [] };
-      morningState.record   = null; morningState.recordErr  = null;
-    }
-    // Transit is always refreshed (time-sensitive)
+    // Transit is always refreshed (time-sensitive), and old departures are useless.
     morningState.transit = null; morningState.transitErr = null;
-
+    morningState.refreshing = true;
     renderMorning();
 
+    // Each source re-renders as soon as it lands. Cached data stays on screen
+    // while refreshing; if a refresh fails, the old data is kept and flagged
+    // as outdated instead of being replaced by an error.
+    const outdated = [];
+    const run = (label, errKey, hasData, fn) => {
+      morningState[errKey] = null;
+      return Promise.resolve()
+        .then(fn)
+        .catch(err => { morningState[errKey] = err.message; })
+        .then(() => {
+          if (morningState[errKey] && hasData()) {
+            morningState[errKey] = null;
+            outdated.push(label);
+          }
+          queueMorningRender();
+        });
+    };
+
     const fetches = [
-      fetchBVGDepartures().catch(err => { morningState.transitErr = err.message; }),
+      run('U7', 'transitErr', () => false, fetchBVGDepartures),
     ];
     if (stale) {
       fetches.push(
-        fetchWeather().catch(err => { morningState.weatherErr = err.message; }),
-        fetchCalendarEvents().catch(err => { morningState.calErr = err.message; }),
-        fetchNews(),
-        fetchBerlinEvents(),
-        fetchReddit(),
-        fetchHackerNews(),
-        fetchDiscogsRecord().catch(err => { morningState.recordErr = err.message; }),
+        run('Weather',  'weatherErr', () => !!morningState.weather, fetchWeather),
+        run('Calendar', 'calErr',     () => morningState.calLoaded, fetchCalendarEvents),
+        run('News',     'newsErr',    () => !!morningState.news,    fetchNews),
+        run('Events',   'eventsErr',  () => !!morningState.events,  fetchBerlinEvents),
+        run('Reddit',   'redditErr',  () => !!morningState.reddit,  fetchReddit),
+        run('HN',       'hnErr',      () => !!morningState.hn,      fetchHackerNews),
+        run('Record',   'recordErr',  () => !!morningState.record,  fetchDiscogsRecord),
       );
     }
 
     await Promise.all(fetches);
 
+    morningState.refreshing = false;
     if (stale) {
+      morningState.outdated = outdated;
       morningState.lastFetched = Date.now();
       saveMorningCache();
     }
-
     renderMorning();
   }
 
@@ -1868,7 +2023,9 @@
     if (!el) return;
     const { action, id, date } = el.dataset;
 
-    if (action === 'refresh-morning') {
+    if (action === 'reminder-toggle' || action === 'reminder-test' || action === 'sign-out') {
+      handleSettingsAction(action);
+    } else if (action === 'refresh-morning') {
       morningState.lastFetched = null;
       initMorningView();
     } else if (action === 'change-city') {
