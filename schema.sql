@@ -132,6 +132,10 @@ grant usage on schema public to authenticated;
 grant select, insert, update, delete
   on habits, entries, todos, journal, push_subscriptions
   to authenticated;
+-- The Edge Functions (reminder) use the service role; RLS doesn't apply to
+-- it, but it still needs table privileges in projects without default grants.
+grant usage on schema public to service_role;
+grant all on all tables in schema public to service_role;
 
 do $$
 declare t text;
