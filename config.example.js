@@ -3,9 +3,9 @@
 window.SUPABASE_URL = "REPLACE_ME_WITH_YOUR_SUPABASE_URL";
 window.SUPABASE_ANON_KEY = "REPLACE_ME_WITH_YOUR_ANON_KEY";
 
-// Optional: Google Calendar integration (Morning tab).
-// Get this from: Google Calendar → Settings → your calendar → "Secret address in iCal format"
-window.JULIEN_CALENDAR_ICAL_URL = "REPLACE_ME_WITH_YOUR_ICAL_URL";
+// Google Calendar (Morning tab) is no longer configured here: the secret iCal
+// URL lives on the Supabase `morning` function as the ICAL_URL secret, so it
+// isn't published with the site. See README → "Morning tab function".
 
 // Optional: Discogs integration — Record of the Day (Morning tab).
 // Token: discogs.com → Settings → Developers → Generate new token

@@ -1070,7 +1070,7 @@
   // ============================================================
   const morningState = {
     weather: null, weatherErr: null,
-    calendar: { today: [], tomorrow: [] }, calErr: null,
+    calendar: { today: [], tomorrow: [] }, calErr: null, calNotConfigured: false,
     news: null, newsErr: null,
     events: null, eventsErr: null,
     reddit: null, redditErr: null,
@@ -1147,11 +1147,72 @@
 
   const WEATHER_CITY_KEY = 'habits.weatherCity';
 
+  // Open-Meteo reports WMO codes; map them onto the closest WWO code so the
+  // fallback reuses WWO_ICONS and the existing render code.
+  const WMO_TO_WWO = {
+    0: [113, 'Clear'], 1: [116, 'Mainly clear'], 2: [116, 'Partly cloudy'], 3: [122, 'Overcast'],
+    45: [248, 'Fog'], 48: [248, 'Freezing fog'],
+    51: [263, 'Light drizzle'], 53: [266, 'Drizzle'], 55: [266, 'Heavy drizzle'],
+    56: [281, 'Freezing drizzle'], 57: [284, 'Freezing drizzle'],
+    61: [296, 'Light rain'], 63: [302, 'Rain'], 65: [308, 'Heavy rain'],
+    66: [311, 'Freezing rain'], 67: [314, 'Freezing rain'],
+    71: [326, 'Light snow'], 73: [332, 'Snow'], 75: [338, 'Heavy snow'], 77: [179, 'Snow grains'],
+    80: [353, 'Light showers'], 81: [356, 'Showers'], 82: [359, 'Heavy showers'],
+    85: [368, 'Snow showers'], 86: [371, 'Heavy snow showers'],
+    95: [389, 'Thunderstorm'], 96: [392, 'Thunderstorm with hail'], 99: [395, 'Thunderstorm with hail'],
+  };
+
+  async function fetchWttr(city) {
+    const resp = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`,
+      { signal: AbortSignal.timeout(8000) });
+    if (!resp.ok) throw new Error(`Weather ${resp.status}`);
+    const data = await resp.json();
+    if (!data.current_condition?.[0] || !data.weather?.[0]) throw new Error('Weather: bad response');
+    return data;
+  }
+
+  // Fallback when wttr.in is down: Open-Meteo, reshaped into wttr's j1 format.
+  async function fetchOpenMeteo(city) {
+    const g = await fetch(`https://geocoding-api.open-meteo.com/v1/search?count=1&name=${encodeURIComponent(city)}`,
+      { signal: AbortSignal.timeout(8000) });
+    if (!g.ok) throw new Error(`Geocoding ${g.status}`);
+    const place = (await g.json()).results?.[0];
+    if (!place) throw new Error(`City not found: ${city}`);
+    const params = new URLSearchParams({
+      latitude: place.latitude, longitude: place.longitude, timezone: 'auto', forecast_days: '1',
+      current: 'temperature_2m,apparent_temperature,weather_code,wind_speed_10m',
+      daily: 'temperature_2m_max,temperature_2m_min,precipitation_sum,sunrise,sunset',
+    });
+    const r = await fetch(`https://api.open-meteo.com/v1/forecast?${params}`, { signal: AbortSignal.timeout(8000) });
+    if (!r.ok) throw new Error(`Weather ${r.status}`);
+    const d = await r.json();
+    const [code, desc] = WMO_TO_WWO[d.current.weather_code] || [119, 'Cloudy'];
+    const hhmm = iso => (iso || '').slice(11, 16);
+    return {
+      current_condition: [{
+        temp_C: String(Math.round(d.current.temperature_2m)),
+        FeelsLikeC: String(Math.round(d.current.apparent_temperature)),
+        weatherCode: String(code),
+        weatherDesc: [{ value: desc }],
+        windspeedKmph: String(Math.round(d.current.wind_speed_10m)),
+      }],
+      weather: [{
+        maxtempC: String(Math.round(d.daily.temperature_2m_max[0])),
+        mintempC: String(Math.round(d.daily.temperature_2m_min[0])),
+        hourly: [{ precipMM: String(d.daily.precipitation_sum[0] || 0) }],
+        astronomy: [{ sunrise: hhmm(d.daily.sunrise[0]), sunset: hhmm(d.daily.sunset[0]) }],
+      }],
+      nearest_area: [{ areaName: [{ value: place.name }] }],
+    };
+  }
+
   async function fetchWeather() {
     const city = localStorage.getItem(WEATHER_CITY_KEY) || 'Paris';
-    const resp = await fetch(`https://wttr.in/${encodeURIComponent(city)}?format=j1`);
-    if (!resp.ok) throw new Error(`Weather ${resp.status}`);
-    morningState.weather = await resp.json();
+    try {
+      morningState.weather = await fetchWttr(city);
+    } catch {
+      morningState.weather = await fetchOpenMeteo(city);
+    }
   }
 
   function parseIcal(text) {
@@ -1202,38 +1263,31 @@
     morningState.calendar = { today: sort(todayEvs), tomorrow: sort(tomorrowEvs) };
   }
 
-  // corsproxy.io now returns 401 for programmatic requests unless the calling
-  // origin is registered on a (paid) account, which is why the calendar started
-  // failing with a 401. Try it first (it still works for some setups), then fall
-  // back to allorigins, which needs no key. Whichever returns the iCal text wins.
-  async function fetchViaProxies(targetUrl) {
-    const proxies = [
-      u => `https://api.allorigins.win/raw?url=${encodeURIComponent(u)}`,
-      u => `https://corsproxy.io/?url=${encodeURIComponent(u)}`,
-    ];
-    let lastErr = null;
-    for (const make of proxies) {
-      try {
-        const resp = await fetch(make(targetUrl));
-        if (!resp.ok) { lastErr = new Error(`HTTP ${resp.status}`); continue; }
-        const text = await resp.text();
-        if (text && /BEGIN:VCALENDAR/i.test(text)) return text;
-        lastErr = new Error('Unexpected response (not an iCal feed)');
-      } catch (e) { lastErr = e; }
-    }
-    throw lastErr || new Error('All proxies failed');
+  // The Supabase Edge Function in supabase/functions/morning fetches things the
+  // browser can't (no CORS) or that need a secret (the iCal URL) server-side.
+  function morningFnUrl(params) {
+    const base = window.SUPABASE_URL;
+    if (!base || base.startsWith('REPLACE_ME')) return null;
+    return `${base}/functions/v1/morning?${new URLSearchParams(params)}`;
   }
 
   async function fetchCalendarEvents() {
-    const url = window.JULIEN_CALENDAR_ICAL_URL;
-    if (!url || url.startsWith('REPLACE_ME')) return;
-    let text;
+    const url = morningFnUrl({ source: 'ical' });
+    if (!url) { morningState.calNotConfigured = true; return; }
+    let resp;
     try {
-      text = await fetchViaProxies(url);
+      resp = await fetch(url, { signal: AbortSignal.timeout(20000) });
     } catch (err) {
-      throw new Error(`iCal fetch failed (${err.message})`);
+      throw new Error(`Calendar unreachable (${err.message})`);
     }
-    parseIcal(text);
+    if (!resp.ok) {
+      const body = await resp.json().catch(() => ({}));
+      if (resp.status === 404 && body.error === 'not_configured') { morningState.calNotConfigured = true; return; }
+      if (resp.status === 404) throw new Error('Calendar function not deployed (see README)');
+      throw new Error(`Calendar failed (${body.error || 'HTTP ' + resp.status})`);
+    }
+    morningState.calNotConfigured = false;
+    parseIcal(await resp.text());
   }
 
   // opts: { filter?: (item) => boolean } — filter is applied BEFORE slicing to
@@ -1369,11 +1423,22 @@
     // `subway=true` alone does NOT exclude buses/trams — at a busy hub those
     // fill the `results` budget and crowd out the U7 departures we want.
     const products = 'subway=true&suburban=false&tram=false&bus=false&ferry=false&express=false&regional=false';
-    const resp = await fetch(
-      `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?duration=90&results=30&${products}`
-    );
-    if (!resp.ok) throw new Error(`BVG ${resp.status}`);
-    const data = await resp.json();
+    // Prefer the Supabase function (talks to BVG/VBB HAFAS directly); fall back
+    // to the public transport.rest wrapper, which is often down (503).
+    const sources = [
+      morningFnUrl({ source: 'departures', stop: STOP_ID, duration: '90', results: '30' }),
+      `https://v6.bvg.transport.rest/stops/${STOP_ID}/departures?duration=90&results=30&${products}`,
+    ].filter(Boolean);
+    let data = null, lastErr = null;
+    for (const url of sources) {
+      try {
+        const resp = await fetch(url, { signal: AbortSignal.timeout(15000) });
+        if (!resp.ok) { lastErr = new Error(`BVG ${resp.status}`); continue; }
+        data = await resp.json();
+        break;
+      } catch (err) { lastErr = err; }
+    }
+    if (!data) throw new Error(`Departures unavailable (${lastErr?.message || 'unknown error'})`);
     morningState.transit = (data.departures || [])
       .filter(d => d.line?.name?.replace(/\s+/g, '') === 'U7'
                 && d.direction?.toLowerCase().includes('spandau'))
@@ -1552,8 +1617,8 @@
 
     // ---- Calendar ----
     let calBody;
-    if (!window.JULIEN_CALENDAR_ICAL_URL || window.JULIEN_CALENDAR_ICAL_URL.startsWith('REPLACE_ME')) {
-      calBody = `<p class="cal-setup-note">Add <code>JULIEN_CALENDAR_ICAL_URL</code> to <code>config.js</code> to connect your calendar.</p>`;
+    if (morningState.calNotConfigured) {
+      calBody = `<p class="cal-setup-note">Set the <code>ICAL_URL</code> secret on the Supabase <code>morning</code> function to connect your calendar.</p>`;
     } else if (morningState.calErr) {
       calBody = `<p class="morning-error">${esc(morningState.calErr)}</p>`;
     } else if (!morningState.calendar.today.length && !morningState.calendar.tomorrow.length && !morningState.calErr) {

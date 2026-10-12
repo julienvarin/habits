@@ -1,0 +1,7 @@
+# Only the bits the habits app uses. See supabase/functions/morning/index.ts.
+project_id = "habits"
+
+[functions.morning]
+# Called from the browser without a user session; the function only serves
+# the calendar feed and U-Bahn departures.
+verify_jwt = false
