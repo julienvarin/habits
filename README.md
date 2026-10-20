@@ -25,6 +25,13 @@ the database only answers to emails listed in `allowed_users` (see the end of
    (A code rather than a link, because a link would open Safari instead of the
    home-screen app.)
 
+## Database updates
+
+When `SUPABASE_ACCESS_TOKEN` is set (below), every deploy also runs `schema.sql`
+against the database through the Supabase Management API. The file is
+idempotent, so new tables (e.g. `weights` and `prefs` for the weight tracker)
+appear on their own. Without the token, paste `schema.sql` into the SQL editor.
+
 ## Supabase functions (free tier)
 
 - `morning`: calendar (iCal), U7 departures and news feeds for the Morning section of Today,

@@ -107,7 +107,7 @@
       function start() {
         document.getElementById('gate').style.display = 'none';
         document.getElementById('app').style.display = '';
-        load(['todos.js', 'journal.js', 'app.js']);
+        load(['todos.js', 'journal.js', 'weight.js', 'app.js']);
         if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(function() {});
       }
 

@@ -82,6 +82,21 @@ create index if not exists journal_date_idx on journal(date desc);
 alter table journal enable row level security;
 drop policy if exists "anon all" on journal;
 
+-- Body weight: one weigh-in per day, in kg (see weight.js).
+create table if not exists weights (
+  date date primary key,
+  kg numeric(5,1) not null check (kg > 0 and kg < 1000),
+  updated_at bigint,
+  created_at timestamptz not null default now()
+);
+alter table weights enable row level security;
+
+-- Small app settings shared across devices (e.g. weight_goal).
+create table if not exists prefs (
+  key text primary key,
+  value text
+);
+alter table prefs enable row level security;
 
 -- Web Push subscriptions for the daily reminder (one row per device).
 create table if not exists push_subscriptions (
@@ -130,7 +145,7 @@ grant execute on function is_owner() to authenticated;
 -- below then limit them to allowed_users.
 grant usage on schema public to authenticated;
 grant select, insert, update, delete
-  on habits, entries, todos, journal, push_subscriptions
+  on habits, entries, todos, journal, push_subscriptions, weights, prefs
   to authenticated;
 -- The Edge Functions (reminder) use the service role; RLS doesn't apply to
 -- it, but it still needs table privileges in projects without default grants.
@@ -140,7 +155,7 @@ grant all on all tables in schema public to service_role;
 do $$
 declare t text;
 begin
-  foreach t in array array['habits', 'entries', 'todos', 'journal', 'push_subscriptions'] loop
+  foreach t in array array['habits', 'entries', 'todos', 'journal', 'push_subscriptions', 'weights', 'prefs'] loop
     execute format('drop policy if exists "anon all" on %I', t);
     execute format('drop policy if exists "owner all" on %I', t);
     execute format('create policy "owner all" on %I for all to authenticated using (is_owner()) with check (is_owner())', t);

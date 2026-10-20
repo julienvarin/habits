@@ -228,6 +228,33 @@
         headers: headers(),
       });
     },
+    listWeights() {
+      return req("/weights?select=date,kg,updated_at&order=date.asc", { headers: headers() });
+    },
+    upsertWeight(row) {
+      // Upsert on the `date` primary key.
+      return req("/weights", {
+        method: "POST",
+        headers: headers({ Prefer: "return=minimal,resolution=merge-duplicates" }),
+        body: JSON.stringify(row),
+      });
+    },
+    deleteWeight(date) {
+      return req("/weights?date=eq." + encodeURIComponent(date), {
+        method: "DELETE",
+        headers: headers(),
+      });
+    },
+    listPrefs() {
+      return req("/prefs?select=key,value", { headers: headers() });
+    },
+    setPref(key, value) {
+      return req("/prefs", {
+        method: "POST",
+        headers: headers({ Prefer: "return=minimal,resolution=merge-duplicates" }),
+        body: JSON.stringify({ key, value }),
+      });
+    },
     deleteJournal(date) {
       return req("/journal?date=eq." + encodeURIComponent(date), {
         method: "DELETE",

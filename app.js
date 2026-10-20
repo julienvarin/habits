@@ -582,6 +582,14 @@
       out.push({ id: `tomorrow@${today}`, icon: '◎', go: 'journal', title: "Pick tomorrow's big task",
         body: 'Write it under “Something to do tomorrow” in your journal.' });
     }
+    const wt = window.weight;
+    if (wt && hour >= 6 && hour < 12 && wt.get(today) == null) {
+      // Only for someone who weighs in most days
+      let recent = 0;
+      for (let i = 1; i <= 7; i++) if (wt.get(fmtDate(shiftDays(new Date(), -i))) != null) recent++;
+      if (recent >= 3) out.push({ id: `weigh@${today}`, icon: '⚖️', go: 'weight', title: 'Weigh in',
+        body: `${recent} weigh-ins in the last 7 days. Log today's to keep the trend sharp.` });
+    }
     for (const h of state.habits) {
       const w = isWeekly(h);
       const s = w ? currentWeekStreak(h) : currentStreak(h.id);
@@ -654,6 +662,7 @@
     haptic();
     closeSheet();
     if (a.go === 'settings') return showView('settings');
+    if (a.go === 'weight') return openWeightLog();
     if (a.go === 'stats') {
       statsHabit = state.habits.find(h => h.id === a.habit) || null;
       return showView('stats');
@@ -692,6 +701,8 @@
         }
       }
     }
+
+    html += buildWeightCard();
 
     main.innerHTML = html;
     if (state.habits.length) initDragAndDrop(main);
@@ -1039,14 +1050,26 @@
     const root = document.getElementById('stats-body');
     if (state.loading) return;
 
-    if (!state.habits.length) {
-      statsHabit = null;
-      root.innerHTML = `<div class="empty"><div class="empty-icon">📈</div><h2>No habits yet</h2><p>Add a habit with <strong>+</strong> to start tracking your stats.</p></div>`;
-      return;
-    }
     // Keep scope valid if the selected habit was removed
     if (statsHabit && !state.habits.some(h => h.id === statsHabit.id)) statsHabit = null;
     const scope = statsHabit;
+
+    // ---- Filter chips (all, weight, then each habit) ----
+    const pill = (label, active, dataAttr, dot) =>
+      `<button class="stats-pill${active ? ' active' : ''}" ${dataAttr}>${dot ? `<span class="stats-dot" style="background:${dot}"></span>` : ''}${esc(label)}</button>`;
+    const pills = `
+      <div class="stats-filter">
+        ${pill('All habits', !scope && !statsWeight, 'data-action="stats-filter" data-habit="all"')}
+        ${W() ? pill('⚖️ Weight', statsWeight, 'data-action="stats-filter" data-habit="weight"') : ''}
+        ${state.habits.map(h => pill(h.name, !statsWeight && scope && scope.id === h.id, `data-action="stats-filter" data-habit="${h.id}"`, h.color)).join('')}
+      </div>`;
+
+    if (statsWeight && W()) { renderWeightStats(root, pills); return; }
+
+    if (!state.habits.length) {
+      root.innerHTML = pills + `<div class="empty"><div class="empty-icon">📈</div><h2>No habits yet</h2><p>Add a habit with <strong>+</strong> to start tracking your stats.</p></div>`;
+      return;
+    }
     const color = scope ? scope.color : ACCENT;
     const minOff = earliestMonthOff();
     statsMonth = Math.max(0, Math.min(statsMonth, minOff));
@@ -1066,15 +1089,6 @@
           <div class="month-sub">${off === 0 ? `${short(days[0])} – today` : `${short(days[0])} – ${short(days[days.length - 1])}`}</div>
         </div>
         <button class="icon-btn" data-action="stats-month" data-month="${off - 1}" aria-label="Next month" ${off === 0 ? 'disabled' : ''}>›</button>
-      </div>`;
-
-    // ---- Filter chips ----
-    const pill = (label, active, dataAttr, dot) =>
-      `<button class="stats-pill${active ? ' active' : ''}" ${dataAttr}>${dot ? `<span class="stats-dot" style="background:${dot}"></span>` : ''}${esc(label)}</button>`;
-    const pills = `
-      <div class="stats-filter">
-        ${pill('All habits', !scope, 'data-action="stats-filter" data-habit="all"')}
-        ${state.habits.map(h => pill(h.name, scope && scope.id === h.id, `data-action="stats-filter" data-habit="${h.id}"`, h.color)).join('')}
       </div>`;
 
     // ---- KPI tiles ----
@@ -1255,6 +1269,273 @@
       });
     });
   }
+
+  // ============================================================
+  // Weight: a card on Today, a log sheet, and a view in Stats
+  // ============================================================
+  const W = () => window.weight;
+  const kgStr = kg => `${kg.toFixed(1)}`;
+  function shortDate(dstr) {
+    if (dstr === todayStr()) return 'Today';
+    if (dstr === fmtDate(shiftDays(new Date(), -1))) return 'Yesterday';
+    const d = new Date(dstr + 'T00:00:00');
+    return d.toLocaleDateString(undefined, { day: 'numeric', month: 'short', ...(d.getFullYear() !== new Date().getFullYear() ? { year: 'numeric' } : {}) });
+  }
+  // Green when a change moves toward the goal, red when it moves away;
+  // neutral without a goal.
+  function towardGoal(delta, current) {
+    const g = W().goal();
+    if (!g || !delta || current == null) return '';
+    return (g - current) * delta > 0 ? 'good' : 'bad';
+  }
+  function signed(n) { return `${n > 0 ? '+' : n < 0 ? '−' : '±'}${Math.abs(n).toFixed(1)}`; }
+
+  // 7-day average now against a week ago.
+  function weeklyChange() {
+    const t = todayStr(), a = W().trendOn(t), b = W().trendOn(fmtDate(shiftDays(new Date(), -7)));
+    return a != null && b != null ? Math.round((a - b) * 10) / 10 : null;
+  }
+
+  // Line through the 7-day average at each weigh-in, between two dates.
+  function weightPoints(from, to) {
+    return W().dates().filter(d => d >= from && d <= to).map(d => ({ d, kg: W().get(d), avg: W().trendOn(d) }));
+  }
+
+  function sparkSvg(pts) {
+    if (pts.length < 2) return '';
+    const Wd = 300, H = 54, pad = 4;
+    const vals = pts.map(p => p.avg);
+    const lo = Math.min(...vals), hi = Math.max(...vals), span = Math.max(hi - lo, 0.6);
+    const t0 = +new Date(pts[0].d), t1 = +new Date(pts[pts.length - 1].d) || t0 + 1;
+    const X = d => pad + ((+new Date(d) - t0) / Math.max(1, t1 - t0)) * (Wd - pad * 2);
+    const Y = v => pad + (1 - (v - (lo + hi - span) / 2) / span) * (H - pad * 2);
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.d).toFixed(1)},${Y(p.avg).toFixed(1)}`).join(' ');
+    const last = pts[pts.length - 1];
+    return `<svg class="wt-spark" viewBox="0 0 ${Wd} ${H}" preserveAspectRatio="none" aria-hidden="true">
+      <path d="${line} L${X(last.d).toFixed(1)},${H} L${X(pts[0].d).toFixed(1)},${H} Z" class="wt-spark-fill"/>
+      <path d="${line}" class="wt-spark-line"/>
+      <circle cx="${X(last.d).toFixed(1)}" cy="${Y(last.avg).toFixed(1)}" r="3.5" class="wt-spark-dot"/>
+    </svg>`;
+  }
+
+  function buildWeightCard() {
+    if (!W()) return '';
+    const head = `<div class="sec-head" id="weight-head"><h2>Weight</h2><button class="link" data-action="weight-log">Log</button></div>`;
+    const last = W().latest();
+    if (!last) {
+      return head + `
+        <button class="wt-card wt-empty" data-action="weight-log">
+          <span class="wt-ico">⚖️</span>
+          <span class="wt-main"><span class="wt-title">Track your weight</span>
+          <span class="wt-sub">${W().missing() ? 'Run schema.sql in Supabase first (adds the weights table).' : 'Log a weigh-in to see how it moves over time.'}</span></span>
+          <span class="chev">›</span>
+        </button>`;
+    }
+    const goal = W().goal();
+    const change = weeklyChange();
+    const loggedToday = last.date === todayStr();
+    // Progress from the first weigh-in toward the goal
+    const first = W().get(W().dates()[0]);
+    let goalHtml = '';
+    if (goal) {
+      const left = Math.round((last.kg - goal) * 10) / 10;
+      const pct = first !== goal ? Math.max(0, Math.min(1, (first - last.kg) / (first - goal))) : 1;
+      goalHtml = `
+        <div class="wt-goal">
+          <div class="wt-goal-row"><span>${Math.abs(left) < 0.05 ? 'Goal reached 🎉' : `${Math.abs(left).toFixed(1)} kg to go`}</span><span>Goal ${kgStr(goal)} kg</span></div>
+          <div class="wt-track"><div class="wt-fill" style="width:${(pct * 100).toFixed(1)}%"></div></div>
+        </div>`;
+    }
+    const pts = weightPoints(fmtDate(shiftDays(new Date(), -30)), todayStr());
+    return head + `
+      <button class="wt-card" data-action="weight-log">
+        <span class="wt-top">
+          <span class="wt-ico">⚖️</span>
+          <span class="wt-main">
+            <span class="wt-big">${kgStr(last.kg)}<small> kg</small></span>
+            <span class="wt-sub">${loggedToday ? 'Today' : `${shortDate(last.date)} · tap to log today`}</span>
+          </span>
+          ${change != null ? `<span class="wt-chip ${towardGoal(change, last.kg)}">${signed(change)} kg<small> / week</small></span>` : ''}
+        </span>
+        ${sparkSvg(pts)}
+        ${goalHtml}
+      </button>`;
+  }
+
+  // ---- Log sheet: one weigh-in for a day (today by default) ----
+  let wtDate = null;
+  function openWeightLog(dstr) {
+    wtDate = dstr || todayStr();
+    const cur = W().get(wtDate);
+    const last = W().latest();
+    const val = cur ?? (last ? last.kg : null);
+    openSheet(cur != null ? 'Edit weigh-in' : 'Log weight', `
+      <div class="wt-entry">
+        <button class="wt-step" data-action="wt-step" data-d="-0.1" aria-label="Minus 0.1">−</button>
+        <label class="wt-field"><input id="wt-kg" type="text" inputmode="decimal" autocomplete="off" placeholder="72.4" value="${val != null ? kgStr(val) : ''}" /><span>kg</span></label>
+        <button class="wt-step" data-action="wt-step" data-d="0.1" aria-label="Plus 0.1">+</button>
+      </div>
+      <div class="wt-date-row">
+        <label class="date-chip"><span id="wt-date-label">${esc(shortDate(wtDate))}</span><input id="wt-date" type="date" value="${wtDate}" max="${todayStr()}" aria-label="Date" /></label>
+      </div>
+      <div class="modal-actions">
+        <button class="btn" data-action="sheet-close">Cancel</button>
+        <button class="btn btn-primary" data-action="wt-save">Save</button>
+      </div>
+      ${cur != null ? `<button class="btn-del" data-action="wt-del">Delete this weigh-in</button>` : ''}`);
+    const inp = document.getElementById('wt-kg');
+    setTimeout(() => { inp.focus(); inp.select(); }, 80);
+  }
+  function readKg() {
+    const v = parseFloat(String(document.getElementById('wt-kg')?.value || '').replace(',', '.'));
+    return v > 0 && v < 1000 ? Math.round(v * 10) / 10 : null;
+  }
+  function saveWeightLog() {
+    const kg = readKg();
+    if (kg == null) { document.getElementById('wt-kg')?.focus(); return; }
+    closeSheet();
+    haptic();
+    W().set(wtDate, kg);
+    toast(`${kgStr(kg)} kg · ${shortDate(wtDate)}`);
+  }
+  function deleteWeighIn(dstr) {
+    const kg = W().get(dstr);
+    if (kg == null) return;
+    closeSheet();
+    W().remove(dstr);
+    toast(`Deleted ${kgStr(kg)} kg · ${shortDate(dstr)}`, 0, { label: 'Undo', fn: () => W().set(dstr, kg) });
+  }
+  document.addEventListener('change', e => {
+    if (e.target.id !== 'wt-date' || !e.target.value) return;
+    wtDate = e.target.value > todayStr() ? todayStr() : e.target.value;
+    document.getElementById('wt-date-label').textContent = shortDate(wtDate);
+    const v = W().get(wtDate);
+    if (v != null) document.getElementById('wt-kg').value = kgStr(v);
+  });
+
+  // ---- Stats: Weight ----
+  let statsWeight = false;
+  let weightRange = '3m';
+  const RANGES = [['1m', '1M', 30], ['3m', '3M', 91], ['6m', '6M', 182], ['1y', '1Y', 365], ['all', 'All', null]];
+
+  function weightFigure(pts, from, to, goal) {
+    const Wd = 340, H = 170, padL = 6, padR = 34, padT = 12, padB = 6;
+    const pw = Wd - padL - padR, ph = H - padT - padB, base = padT + ph;
+    const vals = pts.flatMap(p => [p.kg, p.avg]);
+    if (goal) vals.push(goal);
+    let lo = Math.min(...vals), hi = Math.max(...vals);
+    if (hi - lo < 2) { const m = (hi + lo) / 2; lo = m - 1; hi = m + 1; }
+    lo = Math.floor(lo - 0.3); hi = Math.ceil(hi + 0.3);
+    const t0 = +new Date(from + 'T00:00:00'), t1 = Math.max(+new Date(to + 'T00:00:00'), t0 + 86400000);
+    const X = d => padL + ((+new Date(d + 'T00:00:00') - t0) / (t1 - t0)) * pw;
+    const Y = v => padT + (1 - (v - lo) / (hi - lo)) * ph;
+    const step = Math.max(1, Math.ceil((hi - lo) / 4));
+    let grid = '';
+    for (let v = lo; v <= hi; v += step) {
+      grid += `<line class="viz-grid" x1="${padL}" x2="${Wd - padR}" y1="${Y(v).toFixed(1)}" y2="${Y(v).toFixed(1)}"/>` +
+              `<text class="viz-axis" x="${Wd - padR + 4}" y="${(Y(v) + 3).toFixed(1)}">${v}</text>`;
+    }
+    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(p.d).toFixed(1)},${Y(p.avg).toFixed(1)}`).join(' ');
+    const dots = pts.map(p => `<circle class="wt-dot" cx="${X(p.d).toFixed(1)}" cy="${Y(p.kg).toFixed(1)}" r="2.6"/>`).join('');
+    const goalLine = goal ? `<line class="wt-goal-line" x1="${padL}" x2="${Wd - padR}" y1="${Y(goal).toFixed(1)}" y2="${Y(goal).toFixed(1)}"/>` : '';
+    const last = pts[pts.length - 1];
+    const geo = { padL, pw, padT, ph, W: Wd, t0, t1, lo, hi };
+    const mid = fmtDate(new Date((t0 + t1) / 2));
+    return `
+      <div class="viz-wrap">
+        <svg class="viz-weight" viewBox="0 0 ${Wd} ${H}" style="--c:${ACCENT}" data-pts='${JSON.stringify(pts)}' data-geo='${JSON.stringify(geo)}'>
+          ${grid}${goalLine}${dots}
+          <path class="viz-line" d="${line}"/>
+          <line class="viz-cross" x1="0" x2="0" y1="${padT}" y2="${base}" style="display:none"/>
+          <circle class="viz-dot" cx="${X(last.d).toFixed(1)}" cy="${Y(last.avg).toFixed(1)}" r="4"/>
+          <circle class="viz-cursor" r="4" style="display:none"/>
+        </svg>
+        <div class="viz-tip" style="display:none"></div>
+        <div class="viz-xaxis"><span>${esc(shortDate(from))}</span><span>${esc(shortDate(mid))}</span><span>${esc(shortDate(to))}</span></div>
+      </div>`;
+  }
+
+  function renderWeightStats(root, pills) {
+    const all = W().dates();
+    const [, , days] = RANGES.find(r => r[0] === weightRange) || RANGES[1];
+    const to = todayStr();
+    const from = days ? fmtDate(shiftDays(new Date(), -days + 1)) : (all[0] || to);
+    const pts = weightPoints(from, to);
+    const seg = `
+      <div class="td-seg" role="tablist" aria-label="Range">
+        ${RANGES.map(([k, l]) => `<button class="td-seg-btn ${weightRange === k ? 'on' : ''}" data-action="weight-range" data-range="${k}">${l}</button>`).join('')}
+      </div>`;
+    if (!all.length) {
+      root.innerHTML = pills + `
+        <div class="empty"><div class="empty-icon">⚖️</div><h2>No weigh-ins yet</h2>
+        <p>${W().missing() ? 'Run <code>schema.sql</code> in the Supabase SQL editor first: it adds the weights table.' : 'Log your weight from Today (or below) to see how it moves.'}</p></div>
+        <button class="btn btn-primary wt-log-btn" data-action="weight-log">Log weight</button>`;
+      return;
+    }
+    const goal = W().goal();
+    const last = W().latest();
+    const lowest = pts.length ? Math.min(...pts.map(p => p.kg)) : null;
+    const change = pts.length > 1 ? Math.round((pts[pts.length - 1].avg - pts[0].avg) * 10) / 10 : null;
+    const toGoal = goal ? Math.round((last.kg - goal) * 10) / 10 : null;
+    const tiles = [
+      [`${kgStr(last.kg)}<span class="stat-sub"> kg</span>`, `Latest · ${shortDate(last.date)}`, ''],
+      [change == null ? '—' : `${signed(change)}<span class="stat-sub"> kg</span>`, `Change (7-day avg)`, towardGoal(change, last.kg)],
+      [lowest == null ? '—' : `${kgStr(lowest)}<span class="stat-sub"> kg</span>`, 'Lowest', ''],
+      goal ? [Math.abs(toGoal) < 0.05 ? '✓' : `${Math.abs(toGoal).toFixed(1)}<span class="stat-sub"> kg</span>`, `To goal · ${kgStr(goal)}`, Math.abs(toGoal) < 0.05 ? 'good' : '']
+           : ['—', 'Goal · set in Settings', ''],
+    ];
+    const overview = `<div class="stats-overview">${tiles.map(([v, l, c]) =>
+      `<div class="stat-tile"><div class="num${c ? ' ' + c : ''}">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
+    const chart = `
+      <div class="stats-card">
+        <div class="stats-card-head"><span class="stats-card-title">Trend</span><span class="viz-delta flat">${pts.length} weigh-in${pts.length === 1 ? '' : 's'}</span></div>
+        <div class="stats-card-sub">Dots are weigh-ins; the line is the 7-day average, which smooths out day-to-day swings${goal ? '. Dashed: your goal' : ''}.</div>
+        ${pts.length ? weightFigure(pts, from, to, goal) : `<p class="viz-empty">No weigh-ins in this range.</p>`}
+      </div>`;
+    const rows = pts.slice().reverse().map((p, i, arr) => {
+      const prev = arr[i + 1];
+      const d = prev ? Math.round((p.kg - prev.kg) * 10) / 10 : null;
+      return `
+        <button class="wt-row" data-action="weight-log" data-date="${p.d}">
+          <span class="wt-row-date">${esc(shortDate(p.d))}</span>
+          ${d != null && d !== 0 ? `<span class="wt-row-delta ${towardGoal(d, p.kg)}">${signed(d)}</span>` : ''}
+          <span class="wt-row-kg">${kgStr(p.kg)} kg</span>
+        </button>`;
+    }).join('');
+    const history = pts.length ? `
+      <div class="sec-head"><h2>Weigh-ins</h2><button class="link" data-action="weight-log">Log</button></div>
+      <div class="set-list">${rows}</div>` : '';
+    root.innerHTML = pills + seg + overview + chart + history;
+
+    // Crosshair + tooltip on the chart
+    const svg = root.querySelector('.viz-weight');
+    if (!svg) return;
+    const ps = JSON.parse(svg.dataset.pts), geo = JSON.parse(svg.dataset.geo);
+    const wrap = svg.closest('.viz-wrap'), tip = wrap.querySelector('.viz-tip');
+    const cross = svg.querySelector('.viz-cross'), cursor = svg.querySelector('.viz-cursor');
+    const X = d => geo.padL + ((+new Date(d + 'T00:00:00') - geo.t0) / (geo.t1 - geo.t0)) * geo.pw;
+    const Y = v => geo.padT + (1 - (v - geo.lo) / (geo.hi - geo.lo)) * geo.ph;
+    const move = e => {
+      const rect = svg.getBoundingClientRect();
+      const sx = ((e.clientX - rect.left) / rect.width) * geo.W;
+      let best = ps[0];
+      for (const p of ps) if (Math.abs(X(p.d) - sx) < Math.abs(X(best.d) - sx)) best = p;
+      const x = X(best.d);
+      cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.style.display = '';
+      cursor.setAttribute('cx', x); cursor.setAttribute('cy', Y(best.avg)); cursor.style.display = '';
+      tip.innerHTML = `${esc(shortDate(best.d))} · <strong>${kgStr(best.kg)} kg</strong> · avg ${kgStr(best.avg)}`;
+      tip.style.display = '';
+      tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth, (x / geo.W) * rect.width - tip.offsetWidth / 2)) + 'px';
+    };
+    svg.addEventListener('pointermove', move);
+    svg.addEventListener('pointerdown', move);
+    svg.addEventListener('pointerleave', () => { cross.style.display = 'none'; cursor.style.display = 'none'; tip.style.display = 'none'; });
+  }
+
+  window.renderWeight = () => {
+    if (!state.loading) renderToday();
+    if (state.view === 'stats' && statsWeight) renderStats();
+  };
 
   // ============================================================
   // Render all
@@ -1555,6 +1836,11 @@
     root.innerHTML = `
       <div class="section-label">Daily reminder</div>
       ${reminder}
+      <div class="section-label">Weight</div>
+      <div class="set-list">
+        <button class="set-row" data-action="set-goal"><span class="set-main">Goal weight</span><span>${window.weight?.goal() ? `${window.weight.goal().toFixed(1)} kg` : 'None'} ›</span></button>
+      </div>
+      <p class="set-hint">Shown as a dashed line on the weight chart, with how far is left on Today.</p>
       <div class="section-label">Morning</div>
       <div class="set-list">
         <button class="set-row" data-action="change-city"><span class="set-main">Weather city</span><span>${esc(city)} ›</span></button>
@@ -2478,13 +2764,38 @@
       if (state.todayWeekOffset > 0) { state.todayWeekOffset--; renderToday(); }
     } else if (action === 'stats-filter') {
       const h = el.dataset.habit;
-      statsHabit = h === 'all' ? null : state.habits.find(x => x.id === h) || null;
+      statsWeight = h === 'weight';
+      statsHabit = h === 'all' || statsWeight ? null : state.habits.find(x => x.id === h) || null;
       renderStats();
+    } else if (action === 'weight-log') {
+      if (W()) openWeightLog(el.dataset.date);
+    } else if (action === 'wt-step') {
+      const inp = document.getElementById('wt-kg');
+      const base = readKg() ?? W().latest()?.kg ?? 70;
+      inp.value = kgStr(Math.max(0.1, base + parseFloat(el.dataset.d)));
+      haptic();
+    } else if (action === 'wt-save') {
+      saveWeightLog();
+    } else if (action === 'wt-del') {
+      deleteWeighIn(wtDate);
+    } else if (action === 'sheet-close') {
+      closeSheet();
+    } else if (action === 'weight-range') {
+      weightRange = el.dataset.range;
+      renderStats();
+    } else if (action === 'set-goal') {
+      const cur = W().goal();
+      const v = prompt('Goal weight in kg (leave empty for none):', cur ? kgStr(cur) : '');
+      if (v === null) return;
+      const kg = parseFloat(v.replace(',', '.'));
+      W().setGoal(kg > 0 && kg < 1000 ? kg : null);
+      renderSettings();
     } else if (action === 'stats-month') {
       statsMonth = Math.max(0, parseInt(el.dataset.month, 10) || 0);
       renderStats();
     } else if (action === 'go-stats') {
       statsHabit = state.habits.find(x => x.id === el.dataset.habit) || null;
+      statsWeight = false;
       statsMonth = 0;
       showView('stats');
     } else if (action === 'add-habit') {
@@ -2499,6 +2810,8 @@
       openAlerts();
     }
   });
+
+  document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'wt-kg') saveWeightLog(); });
 
   document.getElementById('home-bell').addEventListener('click', openAlerts);
   document.getElementById('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
@@ -2547,6 +2860,7 @@
     initMorningView();
     if (window.syncTodos) window.syncTodos();
     if (window.syncJournal) window.syncJournal();
+    if (window.weight) window.weight.sync();
   }
   window.addEventListener('focus', refetchOnReturn);
   document.addEventListener('visibilitychange', refetchOnReturn);
@@ -2568,5 +2882,6 @@
   refreshReminderState().then(() => { if (!state.loading) renderToday(); });
   if (window.initTodo) window.initTodo();
   if (window.initJournal) window.initJournal();
+  if (window.weight) window.weight.init();
   initMorningView();
 })();
