@@ -242,32 +242,114 @@
   }
 
   function deleteItem(id) {
-    todos = todos.filter(x => x.id !== id);
+    const t = todos.find(x => x.id === id);
+    if (!t) return;
+    todos = todos.filter(x => x !== t);
     saveCache();
     render();
 
     if (window.db) {
       window.db.deleteTodo(id).catch(() => queuePush({ op: 'delete', id }));
     }
+    window.toast?.(`Deleted “${t.text.length > 28 ? t.text.slice(0, 27) + '…' : t.text}”`, 0, { label: 'Undo', fn: () => restore([t]) });
+  }
+
+  // Undo for a delete: put the items back, here and on the server.
+  function restore(items) {
+    const ids = new Set(todos.map(x => x.id));
+    for (const t of items) {
+      if (ids.has(t.id)) continue;
+      todos.push(t);
+      if (window.db) window.db.addTodo(toRow(t)).catch(() => queuePush({ op: 'add', payload: toRow(t) }));
+    }
+    todos = sortTodos(todos);
+    saveCache();
+    render();
+  }
+
+  function updateItem(id, patch) {
+    const t = todos.find(x => x.id === id);
+    if (!t) return;
+    Object.assign(t, patch);
+    saveCache();
+    render();
+    if (window.db) {
+      const row = {};
+      if ('text' in patch)  row.text  = patch.text;
+      if ('label' in patch) row.label = patch.label;
+      window.db.updateTodo(id, row).catch(() => queuePush({ op: 'update', id, patch: row }));
+    }
+  }
+
+  // Tap a row to edit it: its text, its label (todos), or delete it. The sheet
+  // is shared with the notifications; one listener (attachEvents) serves it.
+  let editing = null; // { id, label, labels }
+
+  function editChips() {
+    const { label, labels } = editing;
+    return `
+      <button class="section-pill ${!label ? 'active' : ''}" data-elabel="">No label</button>
+      ${labels.map(l => `<button class="section-pill ${label === l ? 'active' : ''}" data-elabel="${esc(l)}">${esc(l)}</button>`).join('')}`;
+  }
+
+  function openEditor(id) {
+    const t = todos.find(x => x.id === id);
+    if (!t || !window.openSheet) return;
+    const label = t.label || null;
+    editing = { id, label, labels: t.kind === 'todo' ? [...new Set([...allLabels(), ...(label ? [label] : [])])].sort() : [] };
+    window.openSheet(t.kind === 'list' ? `Edit ${t.label || 'item'}` : t.kind === 'stress' ? 'Edit task' : 'Edit todo', `
+      <textarea id="ed-text" class="ed-input" rows="2" maxlength="200">${esc(t.text)}</textarea>
+      ${t.kind === 'todo' ? `<div class="field-label">Label</div><div class="ed-chips" id="ed-chips">${editChips()}</div>` : ''}
+      <div class="modal-actions">
+        <button class="btn" data-ed="cancel">Cancel</button>
+        <button class="btn btn-primary" data-ed="save">Save</button>
+      </div>
+      <button class="btn-del" data-ed="delete">Delete</button>`);
+  }
+
+  function onEditorClick(e) {
+    if (!editing) return;
+    const lb = e.target.closest('[data-elabel]');
+    if (lb) {
+      editing.label = lb.dataset.elabel || null;
+      document.getElementById('ed-chips').innerHTML = editChips();
+      return;
+    }
+    const act = e.target.closest('[data-ed]')?.dataset.ed;
+    if (!act) return;
+    const { id, label } = editing;
+    const t = todos.find(x => x.id === id);
+    editing = null;
+    window.closeSheet();
+    if (!t) return;
+    if (act === 'delete') deleteItem(id);
+    if (act === 'save') {
+      const text = document.getElementById('ed-text').value.trim();
+      const patch = {};
+      if (text && text !== t.text) patch.text = text;
+      if (t.kind === 'todo' && label !== (t.label || null)) patch.label = label;
+      if (Object.keys(patch).length) updateItem(id, patch);
+    }
   }
 
   // `when` narrows which completed items are cleared: 'today', 'earlier', or
   // undefined for all of them (keeps the plain "Clear completed" meaning).
   function clearDone(when) {
-    const doneIds = todos.filter(x => x.done && inCurrentScope(x) && (
+    const cleared = todos.filter(x => x.done && inCurrentScope(x) && (
       when === 'today'   ?  isDoneToday(x) :
       when === 'earlier' ? !isDoneToday(x) : true
-    )).map(x => x.id);
-    const drop    = new Set(doneIds);
+    ));
+    const drop    = new Set(cleared.map(x => x.id));
     todos = todos.filter(x => !drop.has(x.id));
     saveCache();
     render();
 
     if (window.db) {
-      for (const id of doneIds) {
+      for (const id of drop) {
         window.db.deleteTodo(id).catch(() => queuePush({ op: 'delete', id }));
       }
     }
+    if (cleared.length) window.toast?.(`Cleared ${cleared.length} done`, 0, { label: 'Undo', fn: () => restore(cleared) });
   }
 
   // Persist a stress chip's new board position (optimistic + queue on failure).
@@ -300,7 +382,7 @@
   // Render
   // ============================================================
   function render() {
-    const root = document.getElementById('view-todo');
+    const root = document.getElementById('todo-body');
     if (!root) return;
 
     const segBtn = (mode, txt) =>
@@ -430,7 +512,7 @@
       <div class="td-item ${t.done ? 'done' : ''}">
         <button class="td-cb ${t.done ? 'done' : ''}"
                 data-taction="toggle" data-id="${t.id}" aria-label="${t.done ? 'Undo' : 'Mark done'}"></button>
-        <span class="td-txt">${esc(t.text)}</span>
+        <button class="td-txt" data-taction="edit" data-id="${t.id}">${esc(t.text)}</button>
       </div>`;
   }
 
@@ -528,9 +610,8 @@
       <div class="td-item ${t.done ? 'done' : ''}">
         <button class="td-cb ${t.done ? 'done' : ''}"
                 data-taction="toggle" data-id="${t.id}" aria-label="${t.done ? 'Undo' : 'Mark done'}"></button>
-        <span class="td-txt">${esc(t.text)}</span>
+        <button class="td-txt" data-taction="edit" data-id="${t.id}">${esc(t.text)}</button>
         ${lbl}
-        <button class="td-x" data-taction="delete" data-id="${t.id}" aria-label="Delete">×</button>
       </div>`;
   }
 
@@ -538,7 +619,7 @@
   // Event delegation — attached once to the persistent #view-todo
   // ============================================================
   function attachEvents() {
-    const root = document.getElementById('view-todo');
+    const root = document.getElementById('todo-body');
     if (!root) return;
 
     root.addEventListener('click', e => {
@@ -547,7 +628,7 @@
       const id     = el?.dataset.id;
 
       if (action === 'toggle')      { toggleItem(id); return; }
-      if (action === 'delete')      { deleteItem(id); return; }
+      if (action === 'edit')        { openEditor(id); return; }
       if (action === 'clear-done')  { clearDone(el.dataset.when); return; }
       if (action === 'add') {
         const inp = document.getElementById('todo-input');
@@ -581,6 +662,7 @@
     });
 
     attachStressDrag(root);
+    document.getElementById('sheet-list')?.addEventListener('click', onEditorClick);
   }
 
   // ============================================================
@@ -652,7 +734,19 @@
     sync();                                       // fetch/push in background
   }
 
+  // The tab bar's +: jump to the add box (or start a list when there's none).
+  function focusAdd() {
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (viewMode === 'lists' && !activeList) {
+      const name = prompt('List name (e.g. Movies, Books, Buy):')?.trim();
+      if (name) setActiveList(name);
+      return;
+    }
+    document.getElementById('todo-input')?.focus();
+  }
+
   window.initTodo   = initTodo;
+  window.todoAdd    = focusAdd;
   window.renderTodo = render;
   window.syncTodos  = sync;
 })();

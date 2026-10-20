@@ -50,14 +50,34 @@
   // ============================================================
   // Toast
   // ============================================================
+  // action: optional { label, fn }, e.g. Undo. Toasts with an action stay a bit
+  // longer; onExpire runs when one goes away without its action being tapped.
   const toastEl = document.getElementById('toast');
-  let toastTimer;
-  function toast(msg, duration = 2200) {
-    toastEl.textContent = msg;
-    toastEl.classList.add('show');
+  const toastAct = document.getElementById('toast-act');
+  let toastTimer, toastAction = null, toastExpire = null;
+  function toast(msg, duration = 2600, action) {
+    if (toastExpire) { const f = toastExpire; toastExpire = null; f(); }
+    document.getElementById('toast-msg').textContent = msg;
+    toastAction = action ? action.fn : null;
+    toastExpire = action && action.onExpire ? action.onExpire : null;
+    toastAct.hidden = !action;
+    if (action) toastAct.textContent = action.label;
+    toastEl.hidden = false;
     clearTimeout(toastTimer);
-    toastTimer = setTimeout(() => toastEl.classList.remove('show'), duration);
+    toastTimer = setTimeout(() => {
+      toastEl.hidden = true; toastAction = null;
+      if (toastExpire) { const f = toastExpire; toastExpire = null; f(); }
+    }, action ? 5000 : duration);
   }
+  toastAct.addEventListener('click', () => {
+    const fn = toastAction;
+    toastEl.hidden = true; toastAction = null; toastExpire = null;
+    clearTimeout(toastTimer);
+    if (fn) fn();
+  });
+  window.toast = toast;
+
+  function haptic() { if (navigator.vibrate) { try { navigator.vibrate(8); } catch { /* ignore */ } } }
 
   // ============================================================
   // Offline queue
@@ -86,22 +106,24 @@
   // ============================================================
   async function load() {
     if (!window.SUPABASE_URL || window.SUPABASE_URL.startsWith('REPLACE_ME')) {
-      document.getElementById('view-today').innerHTML = setupBanner();
+      document.getElementById('today-main').innerHTML = setupBanner();
       return;
     }
 
-    showLoader('view-today');
+    if (state.loading) showLoader('today-main');
 
     try {
       const [habits, entries] = await Promise.all([db.listHabits(), db.listEntries()]);
-      state.habits  = habits  || [];
+      // A habit deleted a moment ago stays hidden while its Undo is on offer.
+      state.habits  = (habits || []).filter(h => !pendingHabitDelete || h.id !== pendingHabitDelete.habit.id);
       state.entries = new Set((entries || []).map(e => entryKey(e.habit_id, e.date)));
       state.loading = false;
       renderAll();
       flushQueue();
     } catch (err) {
       console.error(err);
-      document.getElementById('view-today').innerHTML = `
+      if (!state.loading) return; // keep what's on screen; it's only a refresh
+      document.getElementById('today-main').innerHTML = `
         <div class="empty">
           <div class="empty-icon">⚠️</div>
           <h2>Couldn't connect</h2>
@@ -174,16 +196,6 @@
     return best;
   }
 
-  function completionRate(habitId, days) {
-    const h = habitById(habitId);
-    if (h && isWeekly(h)) return weeklyRate(h, Math.ceil(days / 7));
-    let hits = 0;
-    for (let i = 0; i < days; i++) {
-      if (hasTick(habitId, fmtDate(shiftDays(new Date(), -i)))) hits++;
-    }
-    return Math.round((hits / days) * 100);
-  }
-
   // ---- Weekly habits ----
   // A habit with per_week = N (1..6) is done N times a week, Monday–Sunday.
   // Its streak counts weeks in a row that hit N; the week in progress only
@@ -237,18 +249,6 @@
     return Math.min(1, count / target);
   }
 
-  // Mean share of the weekly target over the last `weeks` weeks (incl. this one).
-  function weeklyRate(h, weeks) {
-    let sum = 0, cnt = 0;
-    const created = createdStr(h);
-    for (let w = 0; w < weeks; w++) {
-      const monday = shiftDays(mondayOf(new Date()), -7 * w);
-      if (fmtDate(shiftDays(monday, 6)) < created) break;
-      sum += weekFraction(h, fmtDate(monday)); cnt++;
-    }
-    return cnt ? Math.round((sum / cnt) * 100) : 0;
-  }
-
   function streakLabel(h) {
     const streak = isWeekly(h) ? currentWeekStreak(h) : currentStreak(h.id);
     const unit = isWeekly(h) ? 'w' : '';
@@ -276,37 +276,6 @@
       groups.get(s).push(h);
     }
     return groups;
-  }
-
-  // ============================================================
-  // Render: topbar progress (Today view)
-  // ============================================================
-  function renderProgress() {
-    const area = document.getElementById('progress-area');
-    if (state.view !== 'today' || state.loading) { area.innerHTML = ''; return; }
-    // Daily habits fill the main bar; weekly ones get their own "This week" bar.
-    const daily  = state.habits.filter(h => !isWeekly(h));
-    const weekly = state.habits.filter(isWeekly);
-    const bar = (done, total, label) => {
-      const pct = total ? Math.round((done / total) * 100) : 0;
-      return `
-        <div class="progress-wrap">
-          ${label ? `<span class="progress-name">${label}</span>` : ''}
-          <div class="progress-bar"><div class="progress-fill" style="width:${pct}%"></div></div>
-          <span class="progress-label">${done}/${total}</span>
-        </div>`;
-    };
-    let html = '';
-    if (daily.length) {
-      html += bar(daily.filter(h => hasTick(h.id, todayStr())).length, daily.length, weekly.length ? 'Today' : '');
-    }
-    if (weekly.length) {
-      const monday = mondayOf(new Date());
-      const done = weekly.reduce((n, h) => n + Math.min(weekCount(h.id, monday), h.per_week), 0);
-      const total = weekly.reduce((n, h) => n + h.per_week, 0);
-      html += bar(done, total, 'This week');
-    }
-    area.innerHTML = html;
   }
 
   // ============================================================
@@ -352,14 +321,22 @@
     const shownMonday = shiftDays(mondayOf(new Date()), -7 * state.todayWeekOffset);
     const wCount = weekly ? weekCount(h.id, shownMonday) : 0;
     const wMet   = weekly && wCount >= h.per_week;
+    const that   = state.todayWeekOffset ? 'that' : 'this';
+    const met    = weekly ? wMet : done;
+    const sub = weekly
+      ? (wMet ? `✓ Done ${that} week · ${wCount}/${h.per_week}` : `${wCount}/${h.per_week} ${that} week`)
+      : (done ? '✓ Done today' : streak > 0 ? 'Not yet today' : 'Every day');
 
     return `
-      <div class="habit-card ${(weekly ? wMet : done) ? 'done' : ''}" style="--c:${h.color}" data-habit-id="${h.id}">
+      <div class="habit-card ${met ? 'done' : ''}" style="--c:${h.color}" data-habit-id="${h.id}">
         <div class="card-header">
           <div class="card-drag-handle" aria-label="Drag to reorder">⠿</div>
-          <div class="card-color-dot"></div>
-          <h2 class="card-name">${esc(h.name)}</h2>
-          ${weekly ? `<span class="card-week-chip${wMet ? ' met' : ''}" title="${h.per_week}× a week">${wCount}/${h.per_week}<span class="card-week-unit"> this week</span></span>` : ''}
+          <button class="card-color-dot" data-action="toggle" data-id="${h.id}"
+                  aria-label="${done ? 'Untick' : 'Tick'} ${esc(h.name)} today">${met ? '✓' : esc((h.name.trim()[0] || '·').toUpperCase())}</button>
+          <div class="card-main">
+            <h2 class="card-name">${esc(h.name)}</h2>
+            <div class="card-sub${met ? ' met' : ''}">${sub}</div>
+          </div>
           ${streak > 0
             ? `<span class="card-streak-badge${isRecord ? ' record' : ''}"
                      title="${streak} ${unitWord}${streak===1?'':'s'} in a row${isRecord?' — new record!':''}">${flameIcon(h.color)} ${streakText}</span>`
@@ -368,14 +345,10 @@
         </div>
 
         ${buildCardCal(h.id, h.color)}
-
-        ${weekly
-          ? (wMet ? `<div class="card-footer"><span class="completed-tag show">✓ Done ${state.todayWeekOffset ? 'that' : 'this'} week</span></div>` : '')
-          : (done ? `<div class="card-footer"><span class="completed-tag show">✓ Completed Today</span></div>` : '')}
       </div>`;
   }
 
-  // "One big task" tile — the big task on day D is whatever was written as
+  // "One big task" — the big task on day D is whatever was written as
   // "one thing to do tomorrow" in day D-1's journal entry. state.bigTaskDayOffset
   // selects which day the tile shows (0 = today, +1 = yesterday, …).
   function selectedBigTaskDate() {
@@ -392,10 +365,10 @@
     const off = state.bigTaskDayOffset;
     return `
       <div class="bigtask-nav">
+        ${off > 0 ? `<button class="bigtask-today-btn" data-action="bigtask-today">Today</button>` : ''}
         <button class="bigtask-nav-btn" data-action="bigtask-prev" aria-label="Previous day">‹</button>
         <span class="bigtask-nav-label${off > 0 ? ' past' : ''}">${esc(bigTaskDayLabel(dstr))}</span>
         <button class="bigtask-nav-btn" data-action="bigtask-next" aria-label="Next day" ${off === 0 ? 'disabled' : ''}>›</button>
-        ${off > 0 ? `<button class="bigtask-today-btn" data-action="bigtask-today">Today</button>` : ''}
       </div>`;
   }
   function buildBigTaskTile() {
@@ -404,23 +377,19 @@
     const dstr = selectedBigTaskDate();
     const text = jb.textFor(dstr);
     const done = jb.doneFor(dstr);
-    const nav  = buildBigTaskNav(dstr);
+    const head = `<div class="sec-head" id="bigtask-head"><h2>One big task</h2>${buildBigTaskNav(dstr)}</div>`;
     if (!text) {
       const isToday = state.bigTaskDayOffset === 0;
       const msg = isToday
-        ? 'Set “Something to do tomorrow” in your journal below — it shows up here tomorrow.'
+        ? 'Write “Something to do tomorrow” in your journal below. It shows up here tomorrow.'
         : 'No big task set for this day.';
-      return `
+      return head + `
         <div class="bigtask-tile empty">
-          <div class="bigtask-head"><span class="bigtask-icon">◎</span><span class="bigtask-label">One big task</span></div>
-          ${nav}
-          <p class="bigtask-empty">${msg}</p>
+          <p class="bigtask-empty"><span class="bt-ico">◎</span><span>${msg}</span></p>
         </div>`;
     }
-    return `
+    return head + `
       <div class="bigtask-tile ${done ? 'done' : ''}">
-        <div class="bigtask-head"><span class="bigtask-icon">◎</span><span class="bigtask-label">One big task</span></div>
-        ${nav}
         <button class="bigtask-check ${done ? 'done' : ''}" data-action="toggle-bigtask"
                 aria-label="${done ? 'Mark big task not done' : 'Mark big task done'}">
           <span class="bigtask-box"></span>
@@ -451,36 +420,264 @@
       </div>`;
   }
 
+  // ============================================================
+  // Hero: today's habits at a glance
+  // ============================================================
+  function dailyHabits() { return state.habits.filter(h => !isWeekly(h)); }
+
+  function weeklyTotals(monday) {
+    const weekly = state.habits.filter(isWeekly);
+    return {
+      done:  weekly.reduce((n, h) => n + Math.min(weekCount(h.id, monday), h.per_week), 0),
+      total: weekly.reduce((n, h) => n + h.per_week, 0),
+    };
+  }
+
+  function timeLeftToday() {
+    const now = new Date(), midnight = new Date(now);
+    midnight.setHours(24, 0, 0, 0);
+    const mins = Math.max(1, Math.round((midnight - now) / 60000));
+    return mins >= 60 ? `${Math.floor(mins / 60)}h ${mins % 60}m` : `${mins}m`;
+  }
+
+  // "Read, Run and Stretch" (and "+2 more" past three).
+  function listNames(names) {
+    const shown = names.slice(0, 3), more = names.length - shown.length;
+    if (more > 0) return `${shown.join(', ')} +${more} more`;
+    return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0] || '';
+  }
+
+  function ringSvg(frac) {
+    const C = 2 * Math.PI * 50, f = Math.max(0, Math.min(1, frac));
+    return `<svg viewBox="0 0 120 120" aria-hidden="true">
+      <circle cx="60" cy="60" r="50" class="ring-track"/>
+      ${f > 0 ? `<circle cx="60" cy="60" r="50" class="ring-fill" stroke-dasharray="${(f * C).toFixed(1)} ${C.toFixed(1)}"/>` : ''}
+    </svg>`;
+  }
+
+  function buildHero() {
+    if (!state.habits.length) {
+      return `
+        <div class="hero">
+          <div class="hero-top"><span class="hero-pill">Today</span></div>
+          <div class="hero-mid"><div class="hero-text">
+            <div class="hero-label">No habits yet</div>
+            <div class="hero-big">Start small</div>
+            <div class="hero-of">One thing a day, ticked here.</div>
+          </div></div>
+          <button class="hero-cta" data-action="add-habit">Add your first habit ›</button>
+        </div>`;
+    }
+    const today = todayStr();
+    const daily = dailyHabits();
+    const week  = weeklyTotals(mondayOf(new Date()));
+    // The ring follows daily habits; with only weekly ones, it follows the week.
+    const byDay = daily.length > 0;
+    const done  = byDay ? daily.filter(h => hasTick(h.id, today)).length : week.done;
+    const total = byDay ? daily.length : week.total;
+    const left  = total - done;
+    const hour  = new Date().getHours();
+    const [status, cls] = !left ? ['All done', '']
+      : hour >= 18 ? [`${left} to go tonight`, 'warn']
+      : [`${done} of ${total} done`, 'calm'];
+    const daysLeft = 7 - ((new Date().getDay() + 6) % 7);
+    const unit = byDay ? 'habit' : 'tick';
+
+    // Longest streak running right now, and the last 7 days against the 7 before.
+    let best = null;
+    for (const h of state.habits) {
+      const { streak } = streakLabel(h);
+      if (streak > 0 && (!best || streak > best.streak)) best = { h, streak };
+    }
+    const r7 = scopeRate(null, 0, 7), p7 = scopeRate(null, 7, 7);
+    const delta = r7 !== null && p7 !== null ? Math.round(r7 - p7) : null;
+
+    return `
+      <div class="hero">
+        <div class="hero-top">
+          <span class="hero-pill">${byDay ? "Today's habits" : 'This week'}</span>
+          <span class="hero-status ${cls}">${status}</span>
+        </div>
+        <div class="hero-mid">
+          <div class="ring">${ringSvg(total ? done / total : 0)}
+            <div class="ring-label"><div class="ring-pct">${total ? Math.round((done / total) * 100) : 0}%</div><div class="ring-sub">done</div></div>
+          </div>
+          <div class="hero-text">
+            <div class="hero-label">${left ? (byDay ? 'Left today' : 'Left this week') : (byDay ? 'Today' : 'This week')}</div>
+            <div class="hero-big">${left ? `${left}<small> ${unit}${left > 1 ? 's' : ''}</small>` : 'All done'}</div>
+            <div class="hero-of">${left ? `of ${total} · ${byDay ? `${timeLeftToday()} left` : `${daysLeft} day${daysLeft > 1 ? 's' : ''} left`}` : 'Everything ticked. Nice.'}</div>
+            ${byDay && week.total ? `<div class="hero-of faint">Weekly goals: ${week.done}/${week.total} this week</div>` : ''}
+          </div>
+        </div>
+        <div class="hero-tiles">
+          <button class="hero-tile" data-action="go-stats" ${best ? `data-habit="${best.h.id}"` : ''}>
+            <div class="ht-label">Best streak${best ? ` · ${esc(best.h.name)}` : ''}</div>
+            <div class="ht-val">${best ? `${best.streak}<small> ${isWeekly(best.h) ? 'wk' : 'day'}${best.streak > 1 ? 's' : ''}</small>` : '—'}</div>
+          </button>
+          <button class="hero-tile" data-action="go-stats">
+            <div class="ht-label">Last 7 days</div>
+            <div class="ht-val${delta > 0 ? ' good' : delta < 0 ? ' bad' : ''}">${r7 === null ? '—' : `${Math.round(r7)}%`}${delta ? `<small> ${delta > 0 ? '▲' : '▼'}${Math.abs(delta)}</small>` : ''}</div>
+          </button>
+        </div>
+      </div>`;
+  }
+
+  // ============================================================
+  // Notifications: what needs you today. The bell lists them all
+  // (with an unread count); Today shows the most urgent as a tip.
+  // Each id is stable for as long as the situation lasts, so
+  // "seen" and "dismissed" stick.
+  // ============================================================
+  const LS_SEEN = 'habits.alertsSeen', LS_HIDDEN = 'habits.tipsHidden';
+  let alertList = [];
+
+  function lsList(key) {
+    try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; }
+    catch { return []; }
+  }
+  function lsAdd(key, ids) {
+    const list = lsList(key).filter(k => !ids.includes(k)).concat(ids).slice(-80);
+    try { localStorage.setItem(key, JSON.stringify(list)); } catch { /* ignore */ }
+  }
+
+  function homeAlerts() {
+    const out = [];
+    if (state.loading) return out;
+    const today  = todayStr();
+    const hour   = new Date().getHours();
+    const monday = mondayOf(new Date());
+    const open   = dailyHabits().filter(h => !hasTick(h.id, today));
+
+    if (hour >= 17) {
+      for (const h of open) {
+        const s = currentStreak(h.id);
+        if (s >= 3) out.push({ id: `risk-${h.id}@${today}`, icon: '🔥', go: 'habits',
+          title: `Keep your ${s}-day ${h.name} streak`,
+          body: "It ends at midnight if it isn't ticked today." });
+      }
+    }
+    if (hour >= 18 && open.length) {
+      out.push({ id: `left@${today}`, icon: '⏰', go: 'habits',
+        title: open.length === 1 ? `${open[0].name} is still open` : `${open.length} habits still open`,
+        body: `${open.length > 1 ? listNames(open.map(h => h.name)) + ' · ' : ''}${timeLeftToday()} left today.` });
+    }
+    const daysLeft = 7 - ((new Date().getDay() + 6) % 7); // today included
+    for (const h of state.habits.filter(isWeekly)) {
+      const need = h.per_week - weekCount(h.id, monday);
+      if (need > 0 && need === daysLeft) out.push({ id: `week-${h.id}@${fmtDate(monday)}`, icon: '📅', go: 'habits',
+        title: `${h.name}: ${need} more this week`,
+        body: daysLeft === 1 ? `Today is the last day to reach ${h.per_week}× this week.`
+          : `Every day until Sunday keeps the ${h.per_week}× goal.` });
+    }
+    const jb = window.journalBig, js = window.journalScore;
+    if (jb && hour >= 12) {
+      const t = jb.textFor(today);
+      if (t && !jb.doneFor(today)) out.push({ id: `big@${today}`, icon: '◎', go: 'bigtask',
+        title: 'Your one big task is still open', body: t });
+    }
+    if (js && hour >= 20 && !js.doneOn(today)) {
+      out.push({ id: `journal@${today}`, icon: '✍️', go: 'journal', title: "Write today's journal",
+        body: "Something you did, something to remember, and tomorrow's big task." });
+    } else if (jb && hour >= 20 && !jb.textFor(fmtDate(shiftDays(new Date(), 1)))) {
+      out.push({ id: `tomorrow@${today}`, icon: '◎', go: 'journal', title: "Pick tomorrow's big task",
+        body: 'Write it under “Something to do tomorrow” in your journal.' });
+    }
+    for (const h of state.habits) {
+      const w = isWeekly(h);
+      const s = w ? currentWeekStreak(h) : currentStreak(h.id);
+      const longest = w ? longestWeekStreak(h) : longestStreak(h.id);
+      const live = w ? weekMet(h, monday) : hasTick(h.id, today);
+      if (live && s >= (w ? 3 : 7) && s >= longest) out.push({ id: `record-${h.id}-${s}`, icon: '🏆', go: 'stats', habit: h.id,
+        title: `Record: ${s} ${w ? 'weeks' : 'days'} of ${h.name}`, body: 'Your longest streak yet. Keep it going.' });
+    }
+    if (reminderState === 'off') out.push({ id: 'reminder-off', icon: '🔔', go: 'settings',
+      title: 'Turn on the evening reminder', body: "A notification at 23:00 when habits aren't ticked yet." });
+    return out;
+  }
+
+  function alertRowHtml(a, i, cls) {
+    return `
+      <button class="${cls}" data-action="alert" data-i="${i}">
+        <span class="tip-ico">${a.icon}</span>
+        <span class="tip-main"><span class="tip-title" style="display:block">${esc(a.title)}</span><span class="tip-body" style="display:block">${esc(a.body)}</span></span>
+      </button>`;
+  }
+
+  function renderBell() {
+    const seen = lsList(LS_SEEN);
+    const n = alertList.filter(a => !seen.includes(a.id)).length;
+    const c = document.getElementById('home-bell-count');
+    c.hidden = !n;
+    c.textContent = n > 9 ? '9+' : String(n);
+    document.getElementById('home-bell').setAttribute('aria-label', n ? `Notifications, ${n} new` : 'Notifications');
+  }
+
+  function buildTip() {
+    const hidden = lsList(LS_HIDDEN);
+    const i = alertList.findIndex(a => !hidden.includes(a.id));
+    if (i < 0) return '<div id="home-tip"></div>';
+    const more = alertList.length - 1;
+    return `
+      <div id="home-tip">
+        <div class="tip">
+          ${alertRowHtml(alertList[i], i, 'tip-btn')}
+          <button class="tip-x" data-action="tip-dismiss" data-i="${i}" aria-label="Dismiss">✕</button>
+        </div>
+        ${more > 0 ? `<button class="link tip-more" data-action="open-alerts">${more} more in notifications ›</button>` : ''}
+      </div>`;
+  }
+
+  function openSheet(title, html) {
+    document.getElementById('sheet-title').textContent = title;
+    document.getElementById('sheet-list').innerHTML = html;
+    document.getElementById('sheet').hidden = false;
+  }
+  function closeSheet() { document.getElementById('sheet').hidden = true; }
+  window.openSheet = openSheet;
+  window.closeSheet = closeSheet;
+
+  function openAlerts() {
+    haptic();
+    const html = alertList.length
+      ? alertList.map((a, i) => alertRowHtml(a, i, 'alert-row')).join('')
+      : `<div class="sheet-empty">
+           <div class="sheet-empty-ico">✓</div>
+           <div class="tip-title">You're all caught up</div>
+           <div class="tip-body">Streaks at risk, habits still open tonight, weekly goals running short, your big task and the journal show up here.</div>
+         </div>`;
+    openSheet('Notifications', html);
+    lsAdd(LS_SEEN, alertList.map(a => a.id));
+    renderBell();
+  }
+
+  function followAlert(a) {
+    haptic();
+    closeSheet();
+    if (a.go === 'settings') return showView('settings');
+    if (a.go === 'stats') {
+      statsHabit = state.habits.find(h => h.id === a.habit) || null;
+      return showView('stats');
+    }
+    if (state.view !== 'today') showView('today');
+    const target = { habits: 'habits-head', bigtask: 'bigtask-head', journal: 'view-journal' }[a.go];
+    const el = target && document.getElementById(target);
+    if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    if (a.go === 'journal') setTimeout(() => document.getElementById('jr-day')?.focus({ preventScroll: true }), 400);
+  }
+
   function renderToday() {
-    const root  = document.getElementById('view-today');
+    const main = document.getElementById('today-main');
     if (state.loading) return;
     const today = todayStr();
 
-    // Ensure the two persistent children exist: habits area + journal area.
-    // #view-journal must survive habit re-renders so the textarea keeps focus.
-    let habitsWrap  = document.getElementById('today-habits');
-    let journalWrap = document.getElementById('view-journal');
-    let journalNew  = false;
-    if (!habitsWrap || !journalWrap) {
-      root.innerHTML = '<div id="today-habits"></div><div id="view-journal"></div>';
-      habitsWrap  = document.getElementById('today-habits');
-      journalWrap = document.getElementById('view-journal');
-      journalNew  = true;
-    }
+    alertList = homeAlerts();
+    renderBell();
 
-    const bigTile = buildBigTaskTile();
+    let html = buildHero() + buildTip() + buildBigTaskTile();
 
-    if (!state.habits.length) {
-      habitsWrap.innerHTML = bigTile + `
-        <div class="empty">
-          <div class="empty-icon">🌱</div>
-          <h2>No habits yet</h2>
-          <p>Tap the <strong>+</strong> button below to add your first habit.</p>
-        </div>`;
-    } else {
+    if (state.habits.length) {
+      html += `<div class="sec-head" id="habits-head"><h2>Habits</h2>${buildWeekNav()}</div>`;
       const groups = groupBySection(state.habits);
-      let html = bigTile + buildWeekNav();
-
       for (const [section, habits] of groups) {
         const cards = habits.map(h => buildHabitCard(h, today)).join('');
         if (groups.size === 1 && !section) {
@@ -494,13 +691,10 @@
             </div>`;
         }
       }
-
-      habitsWrap.innerHTML = html;
-      initDragAndDrop(habitsWrap);
     }
 
-    // First-time render (or after a wipe from load()/error path): populate journal.
-    if (journalNew && window.renderJournal) window.renderJournal();
+    main.innerHTML = html;
+    if (state.habits.length) initDragAndDrop(main);
   }
 
   // ============================================================
@@ -597,139 +791,36 @@
   }
 
   // ============================================================
-  // Stats: history heatmap block (rendered inside renderStats)
+  // Stats: month by month
   // ============================================================
-  function historyBlock(scope) {
-    const year      = new Date().getFullYear();
-    const todayS    = todayStr();
-    const yearEnd   = new Date(year, 11, 31);
-    const MONTHS    = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
-
-    // Start the heatmap at the week of the first tick this year (across the
-    // habits in view) rather than always January — so the grid opens on the
-    // week the user actually started completing tasks. Falls back to Jan 1
-    // when there are no ticks yet this year.
-    const shownHabits = scope ? [scope] : state.habits;
-    let firstTick = null;
-    for (const h of shownHabits) {
-      for (const ds of tickDates(h.id)) {
-        if (ds.startsWith(String(year))) { if (!firstTick || ds < firstTick) firstTick = ds; break; }
-      }
-    }
-    const anchor    = firstTick ? new Date(firstTick + 'T00:00:00') : new Date(year, 0, 1);
-    const anchorDow = (anchor.getDay() + 6) % 7; // Mon=0
-    const gridStart = shiftDays(anchor, -anchorDow);
-    // Weeks needed to reach the end of the year from gridStart.
-    const totalWeeks = Math.max(1, Math.ceil((yearEnd - gridStart) / 86400000 / 7) + 1);
-
-    function buildYearHeatmap(habitId, color) {
-      const monthAtWeek = {};
-      const weeks = [];
-      for (let w = 0; w < totalWeeks; w++) {
-        const cells = [];
-        for (let d = 0; d < 7; d++) {
-          const date   = shiftDays(gridStart, w * 7 + d);
-          const ds     = fmtDate(date);
-          const inYear = date.getFullYear() === year;
-          if (inYear && date.getDate() === 1) monthAtWeek[w] = MONTHS[date.getMonth()];
-          cells.push({ ds, inYear, on: inYear && hasTick(habitId, ds), isFut: ds > todayS, isToday: ds === todayS });
-        }
-        weeks.push(cells);
-      }
-
-      const header = weeks.map((_, w) =>
-        `<span class="hist-year-mlabel">${monthAtWeek[w] || ''}</span>`
-      ).join('');
-
-      const cols = weeks.map(cells =>
-        `<div class="hist-year-week">${cells.map(c => {
-          if (!c.inYear) return `<div class="hist-year-cell" style="opacity:0"></div>`;
-          const cls = [c.on ? 'on' : '', c.isFut ? 'future' : '', c.isToday ? 'today' : ''].filter(Boolean).join(' ');
-          return `<div class="hist-year-cell${cls ? ' ' + cls : ''}" style="--c:${color}"
-            data-action="toggle-day" data-id="${habitId}" data-date="${c.ds}" title="${c.ds}"></div>`;
-        }).join('')}</div>`
-      ).join('');
-
-      return `
-        <div class="hist-year-scroll">
-          <div class="hist-year-inner">
-            <div class="hist-year-header">${header}</div>
-            <div class="hist-year-weeks">${cols}</div>
-          </div>
-        </div>`;
-    }
-
-    function buildHistoryCard(h) {
-      const { streak, text: streakText } = streakLabel(h);
-      let yearTicks = 0;
-      for (const k of state.entries) {
-        if (k.startsWith(h.id + '|') && k.slice(h.id.length + 1).startsWith(String(year))) yearTicks++;
-      }
-      return `
-        <div class="history-card" style="color:${h.color}">
-          <div class="history-head">
-            <div class="history-swatch"></div>
-            <h3>${esc(h.name)}</h3>
-            <span class="history-meta">${yearTicks}d${isWeekly(h) ? ` · ${h.per_week}×/wk` : ''}${streak > 0 ? ` · ${flameIcon(h.color)}${streakText}` : ''}</span>
-          </div>
-          ${buildYearHeatmap(h.id, h.color)}
-        </div>`;
-    }
-
-    const habits = scope ? [scope] : state.habits;
-    let cardsHtml = '';
-    if (scope) {
-      cardsHtml = buildHistoryCard(scope);
-    } else {
-      const groups = groupBySection(habits);
-      for (const [section, hs] of groups) {
-        const cards = hs.map(buildHistoryCard).join('');
-        if (groups.size === 1 && !section) {
-          cardsHtml += cards;
-        } else {
-          cardsHtml += `
-            <div class="section-group">
-              <div class="section-header">${esc(section || 'General')}</div>
-              ${cards}
-            </div>`;
-        }
-      }
-    }
-
-    return `<div class="history-year-label">${year}</div>${cardsHtml}`;
-  }
-
-  // ============================================================
-  // Render: Stats
-  // ============================================================
-  // ---- Stats: scope + aggregate helpers ----
   let statsHabit = null; // null = all habits; otherwise a habit object
-  const ACCENT = '#34c759';
+  let statsMonth = 0;    // 0 = this month, 1 = last month, …
+  const ACCENT = '#6d5ae6';
   const JOURNAL_COLOR = '#5e5ce6'; // journaling task accent (indigo)
   const BIGTASK_COLOR = '#ff9f0a'; // one-big-task accent (amber)
   const WD_FULL = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'];
+  const MONTH_NAMES = ['January','February','March','April','May','June','July','August','September','October','November','December'];
 
-  // 30-day (or `days`) completion rate for a journal-like module exposing
-  // activeOn(dateStr) / doneOn(dateStr) — used for the by-task breakdown rows.
+  const createdStr = h => (h.created_at ? fmtDate(new Date(h.created_at)) : '0000-01-01');
+
+  // Completion rate (%) of a journal-like module exposing activeOn(dateStr) /
+  // doneOn(dateStr) over the given days — used for the by-task breakdown rows.
   function activityRate(mod, days) {
-    let done = 0, active = 0, base = new Date();
-    for (let i = 0; i < days; i++) {
-      const ds = fmtDate(shiftDays(base, -i));
+    let done = 0, active = 0;
+    for (const ds of days) {
       if (mod.activeOn(ds)) { active++; if (mod.doneOn(ds)) done++; }
     }
     return active ? Math.round((done / active) * 100) : 0;
   }
 
-  const createdStr = h => (h.created_at ? fmtDate(new Date(h.created_at)) : '0000-01-01');
-
-  // Share of the scope completed on a given day (0..1), or null if nothing was
-  // active yet. For one habit that's 0/1; for "all" it's done/active habits.
   // A habit's score for one day: 0/1 for daily habits; for weekly habits the
   // share of that week's target reached (the same value for each day of it).
   function habitDayValue(h, dstr) {
     return isWeekly(h) ? weekFraction(h, dstr) : (hasTick(h.id, dstr) ? 1 : 0);
   }
 
+  // Share of the scope completed on a given day (0..1), or null if nothing was
+  // active yet. For one habit that's 0/1; for "all" it's done/active habits.
   function dayFraction(dstr, scope) {
     if (scope) {
       if (dstr < createdStr(scope)) return null;
@@ -747,28 +838,54 @@
     return done / active;
   }
 
-  // 7-day trailing completion rate for each of the last `days` days (%)
-  function trendSeries(scope, days) {
-    const base = new Date(), out = [];
-    for (let i = days - 1; i >= 0; i--) {
-      const d = shiftDays(base, -i);
-      let sum = 0, cnt = 0;
-      for (let j = 0; j < 7; j++) {
-        const f = dayFraction(fmtDate(shiftDays(d, -j)), scope);
-        if (f !== null) { sum += f; cnt++; }
-      }
-      out.push({ d: `${d.getMonth() + 1}/${d.getDate()}`, v: cnt ? Math.round((sum / cnt) * 100) : null });
-    }
-    // Drop the leading stretch before any data existed
-    const first = out.findIndex(p => p.v !== null);
-    return first < 0 ? [] : out.slice(first).map(p => ({ ...p, v: p.v ?? 0 }));
+  // Mean daily completion rate over a window [startAgo, startAgo+len) days back
+  function scopeRate(scope, startAgo, len) {
+    const days = [];
+    for (let i = startAgo; i < startAgo + len; i++) days.push(fmtDate(shiftDays(new Date(), -i)));
+    return rateOver(days, scope);
   }
 
-  // Weekday rhythm. For a weekly habit it's how often you do it on each
-  // weekday; in the all-habits view only daily habits count (a weekly habit's
-  // score is the same every day of its week, so it says nothing per weekday).
+  // Mean daily completion rate (%) over a list of days, or null without data.
+  function rateOver(days, scope) {
+    let sum = 0, cnt = 0;
+    for (const ds of days) {
+      const f = dayFraction(ds, scope);
+      if (f !== null) { sum += f; cnt++; }
+    }
+    return cnt ? (sum / cnt) * 100 : null;
+  }
+
+  function monthStart(off) { const n = new Date(); return new Date(n.getFullYear(), n.getMonth() - off, 1); }
+  function daysInMonth(off) { const s = monthStart(off); return new Date(s.getFullYear(), s.getMonth() + 1, 0).getDate(); }
+  // The month's days, from the 1st up to its last day or today.
+  function monthDays(off) {
+    const start = monthStart(off), today = todayStr(), out = [];
+    for (let d = new Date(start); d.getMonth() === start.getMonth(); d = shiftDays(d, 1)) {
+      const ds = fmtDate(d);
+      if (ds > today) break;
+      out.push(ds);
+    }
+    return out;
+  }
+  // How many months back the data goes (the earliest month you can step to).
+  function earliestMonthOff() {
+    let first = todayStr();
+    for (const h of state.habits) {
+      const c = createdStr(h);
+      if (c !== '0000-01-01' && c < first) first = c;
+      const t = tickDates(h.id)[0];
+      if (t && t < first) first = t;
+    }
+    const f = new Date(first + 'T00:00:00'), n = new Date();
+    return Math.max(0, (n.getFullYear() - f.getFullYear()) * 12 + n.getMonth() - f.getMonth());
+  }
+
+  // Weekday rhythm over the given days. For a weekly habit it's how often you
+  // do it on each weekday; in the all-habits view only daily habits count (a
+  // weekly habit's score is the same every day of its week, so it says nothing
+  // per weekday).
   function weekdayRhythm(scope, days) {
-    const sums = new Array(7).fill(0), cnts = new Array(7).fill(0), base = new Date();
+    const sums = new Array(7).fill(0), cnts = new Array(7).fill(0);
     const dailyOnly = dstr => {
       let done = 0, active = 0;
       for (const h of state.habits) {
@@ -780,11 +897,10 @@
     const valueFor = dstr => !scope ? dailyOnly(dstr)
       : isWeekly(scope) ? (dstr < createdStr(scope) ? null : (hasTick(scope.id, dstr) ? 1 : 0))
       : dayFraction(dstr, scope);
-    for (let i = 0; i < days; i++) {
-      const d = shiftDays(base, -i);
-      const f = valueFor(fmtDate(d));
+    for (const ds of days) {
+      const f = valueFor(ds);
       if (f === null) continue;
-      const wd = d.getDay();
+      const wd = new Date(ds + 'T00:00:00').getDay();
       sums[wd] += f; cnts[wd]++;
     }
     return [1, 2, 3, 4, 5, 6, 0].map(wd => ({
@@ -793,63 +909,89 @@
     }));
   }
 
-  // Mean daily completion rate over a window [startAgo, startAgo+len) days back
-  function scopeRate(scope, startAgo, len) {
-    let sum = 0, cnt = 0, base = new Date();
-    for (let i = startAgo; i < startAgo + len; i++) {
-      const f = dayFraction(fmtDate(shiftDays(base, -i)), scope);
-      if (f !== null) { sum += f; cnt++; }
-    }
-    return cnt ? (sum / cnt) * 100 : null;
+  // 7-day trailing completion rate for each of the given days (%), null where
+  // nothing was tracked yet.
+  function paceSeries(scope, days) {
+    return days.map(ds => {
+      let sum = 0, cnt = 0;
+      for (let j = 0; j < 7; j++) {
+        const f = dayFraction(fmtDate(shiftDays(new Date(ds + 'T00:00:00'), -j)), scope);
+        if (f !== null) { sum += f; cnt++; }
+      }
+      return cnt ? Math.round((sum / cnt) * 100) : null;
+    });
   }
 
-  function areaFigure(pts, color) {
-    if (pts.length < 2) return `<p class="viz-empty">Not enough history yet — keep ticking.</p>`;
-    const n = pts.length, W = 340, H = 132, padL = 6, padR = 12, padT = 12, padB = 18;
+  // The longest run of ticked days inside the given days.
+  function bestRun(habitId, days) {
+    let best = 0, cur = 0;
+    for (const ds of days) { cur = hasTick(habitId, ds) ? cur + 1 : 0; if (cur > best) best = cur; }
+    return best;
+  }
+
+  // Line chart of the month's pace against last month's (grey), across the
+  // whole month so the current one stops at today.
+  function paceFigure(cur, old, n, color, labels) {
+    const W = 340, H = 140, padL = 6, padR = 22, padT = 12, padB = 6;
     const pw = W - padL - padR, ph = H - padT - padB, base = padT + ph;
-    const X = i => padL + (i / (n - 1)) * pw;
+    const X = i => padL + (n > 1 ? (i / (n - 1)) * pw : pw / 2);
     const Y = v => padT + (1 - v / 100) * ph;
-    const line = pts.map((p, i) => `${i ? 'L' : 'M'}${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ');
-    const area = `M${X(0).toFixed(1)},${base} ${pts.map((p, i) => `L${X(i).toFixed(1)},${Y(p.v).toFixed(1)}`).join(' ')} L${X(n - 1).toFixed(1)},${base} Z`;
+    const path = pts => {
+      let d = '', pen = false;
+      pts.forEach((v, i) => {
+        if (v === null) { pen = false; return; }
+        d += `${pen ? 'L' : 'M'}${X(i).toFixed(1)},${Y(v).toFixed(1)} `;
+        pen = true;
+      });
+      return d.trim();
+    };
+    const firstCur = cur.findIndex(v => v !== null);
+    if (firstCur < 0) return `<p class="viz-empty">Nothing ticked this month yet.</p>`;
+    const lastCur = cur.length - 1;
+    const area = `M${X(firstCur).toFixed(1)},${base} ` + cur.map((v, i) => v === null ? '' : `L${X(i).toFixed(1)},${Y(v).toFixed(1)}`).join(' ') + ` L${X(lastCur).toFixed(1)},${base} Z`;
     const grid = [0, 50, 100].map(g =>
       `<line class="viz-grid" x1="${padL}" x2="${W - padR}" y1="${Y(g)}" y2="${Y(g)}"/>` +
-      `<text class="viz-axis" x="${W - padR + 1}" y="${Y(g) + 3}">${g}</text>`).join('');
-    const last = pts[n - 1];
+      `<text class="viz-axis" x="${W - padR + 4}" y="${Y(g) + 3}">${g}</text>`).join('');
     const geo = { padL, pw, padT, ph, n, W };
+    const lastV = cur[lastCur];
     return `
       <div class="viz-wrap">
         <svg class="viz-area" viewBox="0 0 ${W} ${H}" style="--c:${color}"
-             data-pts='${JSON.stringify(pts)}' data-geo='${JSON.stringify(geo)}'>
+             data-cur='${JSON.stringify(cur)}' data-old='${JSON.stringify(old)}' data-labels='${JSON.stringify(labels)}' data-geo='${JSON.stringify(geo)}'>
           ${grid}
+          ${old.some(v => v !== null) ? `<path class="viz-old" d="${path(old)}"/>` : ''}
           <path class="viz-fill" d="${area}"/>
-          <path class="viz-line" d="${line}"/>
+          <path class="viz-line" d="${path(cur)}"/>
           <line class="viz-cross" x1="0" x2="0" y1="${padT}" y2="${base}" style="display:none"/>
-          <circle class="viz-dot" cx="${X(n - 1).toFixed(1)}" cy="${Y(last.v).toFixed(1)}" r="3.4"/>
-          <circle class="viz-cursor" r="3.4" style="display:none"/>
+          ${lastV !== null ? `<circle class="viz-dot" cx="${X(lastCur).toFixed(1)}" cy="${Y(lastV).toFixed(1)}" r="4"/>` : ''}
+          <circle class="viz-cursor" r="4" style="display:none"/>
         </svg>
         <div class="viz-tip" style="display:none"></div>
-        <div class="viz-xaxis"><span>${esc(pts[0].d)}</span><span>${esc(last.d)}</span></div>
+        <div class="viz-xaxis"><span>${esc(labels[0])}</span><span>${esc(labels[Math.floor((n - 1) / 2)])}</span><span>${esc(labels[n - 1])}</span></div>
       </div>`;
   }
 
-  function barsFigure(rhythm, color) {
-    const W = 340, H = 118, padL = 4, padR = 4, padT = 16, padB = 18;
+  // Bars: one per item { letter, full, v, has, month? }. `sel` is highlighted
+  // (or the best one, when there's no selection); bars with a month offset can
+  // be tapped to go to that month.
+  function barsFigure(items, color, sel) {
+    const W = 340, H = 122, padL = 4, padR = 4, padT = 18, padB = 18;
     const pw = W - padL - padR, ph = H - padT - padB, base = padT + ph;
-    const band = pw / 7, barW = Math.min(26, band - 10);
-    const maxV = Math.max(...rhythm.map(r => r.v), 1);
-    const bestI = rhythm.reduce((b, r, i) => (r.v > rhythm[b].v ? i : b), 0);
-    const bars = rhythm.map((r, i) => {
+    const band = pw / items.length, barW = Math.min(30, band - 12);
+    const bestI = sel != null ? sel : items.reduce((b, r, i) => (r.v > items[b].v ? i : b), 0);
+    const bars = items.map((r, i) => {
       const cx = padL + band * i + band / 2;
       const h = r.has ? (r.v / 100) * ph : 0;
       const y = base - h;
-      const isBest = i === bestI && r.v > 0;
+      const isBest = i === bestI && (r.v > 0 || sel != null);
       return `
-        <g class="viz-bar" data-full="${esc(r.full)}" data-v="${r.v}">
-          <rect class="viz-bar-hit" x="${cx - band / 2}" y="${padT}" width="${band}" height="${ph}"/>
+        <g class="viz-bar${isBest && sel != null ? ' sel' : ''}" data-full="${esc(r.full)}" data-v="${r.v}" data-has="${r.has ? 1 : 0}"
+           ${r.month != null ? `data-action="stats-month" data-month="${r.month}"` : ''}>
+          <rect class="viz-bar-hit" x="${cx - band / 2}" y="${padT}" width="${band}" height="${ph + padB}"/>
           <rect class="viz-bar-rect${isBest ? ' best' : ''}" x="${(cx - barW / 2).toFixed(1)}" y="${y.toFixed(1)}"
-                width="${barW.toFixed(1)}" height="${Math.max(h, r.has ? 2 : 0).toFixed(1)}" rx="3"/>
-          ${isBest ? `<text class="viz-bar-cap" x="${cx.toFixed(1)}" y="${(y - 4).toFixed(1)}" text-anchor="middle">${r.v}%</text>` : ''}
-          <text class="viz-axis" x="${cx.toFixed(1)}" y="${base + 12}" text-anchor="middle">${r.letter}</text>
+                width="${barW.toFixed(1)}" height="${Math.max(h, r.has ? 3 : 0).toFixed(1)}" rx="5"/>
+          ${isBest && r.has ? `<text class="viz-bar-cap" x="${cx.toFixed(1)}" y="${(y - 5).toFixed(1)}" text-anchor="middle">${r.v}%</text>` : ''}
+          <text class="viz-axis${isBest && sel != null ? ' strong' : ''}" x="${cx.toFixed(1)}" y="${base + 13}" text-anchor="middle">${esc(r.letter)}</text>
         </g>`;
     }).join('');
     return `
@@ -862,21 +1004,71 @@
       </div>`;
   }
 
+  // One month calendar per habit; tap a day to tick or untick it.
+  function monthCalendar(h, off) {
+    const start  = monthStart(off), todayS = todayStr();
+    const lead   = (start.getDay() + 6) % 7; // Mon=0
+    const n      = daysInMonth(off);
+    const cells  = [];
+    for (let i = 0; i < lead; i++) cells.push('<div class="cal-cell empty-cell"></div>');
+    let count = 0;
+    for (let d = 1; d <= n; d++) {
+      const ds = fmtDate(new Date(start.getFullYear(), start.getMonth(), d));
+      const on = hasTick(h.id, ds);
+      if (on) count++;
+      cells.push(`<div class="cal-cell${on ? ' on' : ''}${ds > todayS ? ' future' : ''}${ds === todayS ? ' today' : ''}"
+        data-action="toggle-day" data-id="${h.id}" data-date="${ds}" title="${ds}"><span class="cal-day-num">${d}</span></div>`);
+    }
+    while (cells.length % 7) cells.push('<div class="cal-cell empty-cell"></div>');
+    const rows = [];
+    for (let i = 0; i < cells.length; i += 7) rows.push(`<div class="cal-row">${cells.slice(i, i + 7).join('')}</div>`);
+    const head = `<div class="cal-row">${['M','T','W','T','F','S','S'].map(l => `<span class="cal-col-label">${l}</span>`).join('')}</div>`;
+    const { streak, text: streakText } = streakLabel(h);
+    return `
+      <div class="history-card" style="--c:${h.color}">
+        <div class="history-head">
+          <div class="history-swatch"></div>
+          <h3>${esc(h.name)}</h3>
+          <span class="history-meta">${count}×${isWeekly(h) ? ` · ${h.per_week}×/wk` : ''}${off === 0 && streak > 0 ? ` · ${flameIcon(h.color)} ${streakText}` : ''}</span>
+        </div>
+        <div class="hist-month-grid">${head}${rows.join('')}</div>
+      </div>`;
+  }
+
   function renderStats() {
-    const root = document.getElementById('view-stats');
+    const root = document.getElementById('stats-body');
     if (state.loading) return;
 
     if (!state.habits.length) {
       statsHabit = null;
-      root.innerHTML = `<div class="empty"><h2>No habits yet</h2><p>Add a habit to start tracking your stats.</p></div>`;
+      root.innerHTML = `<div class="empty"><div class="empty-icon">📈</div><h2>No habits yet</h2><p>Add a habit with <strong>+</strong> to start tracking your stats.</p></div>`;
       return;
     }
     // Keep scope valid if the selected habit was removed
     if (statsHabit && !state.habits.some(h => h.id === statsHabit.id)) statsHabit = null;
     const scope = statsHabit;
     const color = scope ? scope.color : ACCENT;
+    const minOff = earliestMonthOff();
+    statsMonth = Math.max(0, Math.min(statsMonth, minOff));
+    const off   = statsMonth;
+    const days  = monthDays(off);
+    const prevDays = monthDays(off + 1);
+    const start = monthStart(off);
+    const mName = MONTH_NAMES[start.getMonth()];
+    const prevName = MONTH_NAMES[monthStart(off + 1).getMonth()];
+    const short = d => new Date(d + 'T00:00:00').toLocaleDateString(undefined, { day: 'numeric', month: 'short' });
 
-    // ---- Filter pills ----
+    // ---- Month switcher ----
+    const nav = `
+      <div class="month-nav">
+        <button class="icon-btn" data-action="stats-month" data-month="${off + 1}" aria-label="Previous month" ${off >= minOff ? 'disabled' : ''}>‹</button>
+        <div class="month-label">${mName}${start.getFullYear() !== new Date().getFullYear() ? ` ${start.getFullYear()}` : ''}
+          <div class="month-sub">${off === 0 ? `${short(days[0])} – today` : `${short(days[0])} – ${short(days[days.length - 1])}`}</div>
+        </div>
+        <button class="icon-btn" data-action="stats-month" data-month="${off - 1}" aria-label="Next month" ${off === 0 ? 'disabled' : ''}>›</button>
+      </div>`;
+
+    // ---- Filter chips ----
     const pill = (label, active, dataAttr, dot) =>
       `<button class="stats-pill${active ? ' active' : ''}" ${dataAttr}>${dot ? `<span class="stats-dot" style="background:${dot}"></span>` : ''}${esc(label)}</button>`;
     const pills = `
@@ -886,95 +1078,111 @@
       </div>`;
 
     // ---- KPI tiles ----
-    const today = todayStr();
+    const rate = rateOver(days, scope), prevRate = rateOver(prevDays, scope);
+    const delta = rate !== null && prevRate !== null ? Math.round(rate - prevRate) : null;
+    const pct = v => v === null ? '—' : `${Math.round(v)}<span class="stat-sub">%</span>`;
+    const deltaTile = [delta === null ? '—' : `${delta > 0 ? '+' : ''}${delta}<span class="stat-sub"> pts</span>`, `vs ${prevName}`, delta > 0 ? 'good' : delta < 0 ? 'bad' : ''];
     let tiles;
     if (!scope) {
-      const daily  = state.habits.filter(h => !isWeekly(h));
-      const weekly = state.habits.filter(isWeekly);
-      const doneToday = daily.filter(h => hasTick(h.id, today)).length;
-      const r30 = scopeRate(null, 0, 30) ?? 0;
-      const best = Math.max(0, ...daily.map(h => longestStreak(h.id)));
+      const daily = state.habits.filter(h => !isWeekly(h));
+      const perfect = days.filter(ds => {
+        const active = daily.filter(h => ds >= createdStr(h));
+        return active.length && active.every(h => hasTick(h.id, ds));
+      }).length;
+      let ticks = 0;
+      for (const k of state.entries) { const ds = k.slice(k.indexOf('|') + 1); if (ds >= days[0] && ds <= days[days.length - 1]) ticks++; }
       tiles = [
-        [`${doneToday}<span class="stat-sub">/${daily.length}</span>`, 'Done today'],
-        [`${Math.round(r30)}<span class="stat-sub">%</span>`, '30-day rate'],
-        [`${best}<span class="stat-sub">d</span>`, 'Best daily streak'],
+        [pct(rate), 'Completion'],
+        [`${perfect}<span class="stat-sub">/${days.length}</span>`, 'Perfect days'],
+        [`${ticks}`, 'Ticks'],
+        deltaTile,
       ];
-      if (weekly.length) {
-        const monday = mondayOf(new Date());
-        const wDone = weekly.reduce((n, h) => n + Math.min(weekCount(h.id, monday), h.per_week), 0);
-        const wTotal = weekly.reduce((n, h) => n + h.per_week, 0);
-        tiles.push([`${wDone}<span class="stat-sub">/${wTotal}</span>`, 'Weekly goals']);
-      } else {
-        tiles.push([`${state.entries.size}`, 'Total ticks']);
-      }
     } else if (isWeekly(scope)) {
+      const times = days.filter(ds => hasTick(scope.id, ds)).length;
+      // Weeks that start this month and are over (or already met)
+      const mondays = days.filter(ds => new Date(ds + 'T00:00:00').getDay() === 1).map(ds => new Date(ds + 'T00:00:00'));
+      const judged = mondays.filter(m => fmtDate(shiftDays(m, 6)) < todayStr() || weekMet(scope, m));
       tiles = [
-        [`${weekCount(scope.id, mondayOf(new Date()))}<span class="stat-sub">/${scope.per_week}</span>`, 'This week'],
-        [`${currentWeekStreak(scope)}<span class="stat-sub">w</span>`, 'Current streak'],
-        [`${longestWeekStreak(scope)}<span class="stat-sub">w</span>`, 'Longest streak'],
-        [`${completionRate(scope.id, 28)}<span class="stat-sub">%</span>`, '4-week rate'],
+        [`${times}`, 'Times done'],
+        [`${judged.filter(m => weekMet(scope, m)).length}<span class="stat-sub">/${judged.length}</span>`, 'Weeks met'],
+        [pct(rate), 'Of the target'],
+        deltaTile,
       ];
     } else {
+      const counted = days.filter(ds => ds >= createdStr(scope));
+      const done = counted.filter(ds => hasTick(scope.id, ds)).length;
       tiles = [
-        [`${currentStreak(scope.id)}<span class="stat-sub">d</span>`, 'Current streak'],
-        [`${longestStreak(scope.id)}<span class="stat-sub">d</span>`, 'Longest streak'],
-        [`${completionRate(scope.id, 30)}<span class="stat-sub">%</span>`, '30-day rate'],
-        [`${tickDates(scope.id).length}`, 'Total ticks'],
+        [`${done}<span class="stat-sub">/${counted.length}</span>`, 'Days done'],
+        [pct(rate), 'Completion'],
+        [`${bestRun(scope.id, days)}<span class="stat-sub">d</span>`, 'Best run'],
+        deltaTile,
       ];
     }
-    // Journaling and the one-big-task now appear as tasks in the breakdown
-    // list below (not as extra number tiles at the top of the page).
-    const overview = `<div class="stats-overview">${tiles.map(([v, l]) =>
-      `<div class="stat-tile"><div class="num">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
+    const overview = `<div class="stats-overview">${tiles.map(([v, l, c]) =>
+      `<div class="stat-tile"><div class="num${c ? ' ' + c : ''}">${v}</div><div class="lbl">${l}</div></div>`).join('')}</div>`;
 
-    // ---- Consistency trend (with momentum vs prior 4 weeks) ----
-    const trend = trendSeries(scope, 56);
-    const recent = scopeRate(scope, 0, 28), prior = scopeRate(scope, 28, 28);
-    let momentum = '';
-    if (recent !== null && prior !== null) {
-      const delta = Math.round(recent - prior);
-      const dir = delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat';
-      const arrow = delta > 0 ? '▲' : delta < 0 ? '▼' : '→';
-      momentum = `<span class="viz-delta ${dir}">${arrow} ${Math.abs(delta)}% vs prev 4 wks</span>`;
-    }
-    const trendCard = `
+    // ---- Day by day, against last month ----
+    const n = Math.max(daysInMonth(off), prevDays.length);
+    const labels = [];
+    for (let i = 0; i < n; i++) labels.push(`${i + 1}`);
+    const paceCard = `
       <div class="stats-card">
-        <div class="stats-card-head"><span class="stats-card-title">Consistency</span>${momentum}</div>
-        <div class="stats-card-sub">${scope && isWeekly(scope) ? `Share of the ${scope.per_week}×/week target` : '7-day completion rate'} · last 8 weeks</div>
-        ${areaFigure(trend, color)}
+        <div class="stats-card-head"><span class="stats-card-title">Day by day</span>${delta !== null ? `<span class="viz-delta ${delta > 0 ? 'up' : delta < 0 ? 'down' : 'flat'}">${delta > 0 ? '▲' : delta < 0 ? '▼' : '→'} ${Math.abs(delta)} pts vs ${prevName}</span>` : ''}</div>
+        <div class="stats-card-sub">${scope && isWeekly(scope) ? `Share of the ${scope.per_week}×/week target` : '7-day completion rate'}, each day of the month</div>
+        ${paceFigure(paceSeries(scope, days), paceSeries(scope, prevDays), n, color, labels)}
+        <div class="legend" style="--c:${color}"><span class="lg-item"><span class="lg-line"></span>${mName}</span><span class="lg-item"><span class="lg-line old"></span>${prevName}</span></div>
       </div>`;
 
     // ---- Weekly rhythm ----
-    const rhythm = weekdayRhythm(scope, 84);
+    const rhythm = weekdayRhythm(scope, days);
     const anyData = rhythm.some(r => r.has);
     const best = rhythm.reduce((b, r) => (r.v > b.v ? r : b), rhythm[0]);
     const rhythmCard = `
       <div class="stats-card">
         <div class="stats-card-head"><span class="stats-card-title">Weekly rhythm</span></div>
-        <div class="stats-card-sub">${anyData ? `${scope && isWeekly(scope) ? 'Most often on' : 'Most consistent on'} <strong>${esc(best.full)}</strong>` : 'Completion rate by weekday'}${!scope && state.habits.some(isWeekly) ? ' · daily habits' : ''}</div>
+        <div class="stats-card-sub">${anyData && best.v > 0 ? `${scope && isWeekly(scope) ? 'Most often on' : 'Most consistent on'} <strong>${esc(best.full)}s</strong>` : 'Completion rate by weekday'}${!scope && state.habits.some(isWeekly) ? ' · daily habits' : ''}</div>
         ${barsFigure(rhythm, color)}
       </div>`;
+
+    // ---- Last 6 months (tap one to go there) ----
+    const months = [];
+    for (let o = Math.min(off + 5, minOff); o >= Math.max(0, off - 5) && months.length < 6; o--) months.push(o);
+    const monthItems = months.map(o => {
+      const r = rateOver(monthDays(o), scope);
+      const m = monthStart(o);
+      return { letter: MONTH_NAMES[m.getMonth()].slice(0, 3), full: `${MONTH_NAMES[m.getMonth()]} ${m.getFullYear()}`, v: r === null ? 0 : Math.round(r), has: r !== null, month: o };
+    });
+    const monthsCard = monthItems.length > 1 ? `
+      <div class="stats-card">
+        <div class="stats-card-head"><span class="stats-card-title">Month by month</span></div>
+        <div class="stats-card-sub">Completion rate · tap a month to see it</div>
+        ${barsFigure(monthItems, color, months.indexOf(off))}
+      </div>` : '';
 
     // ---- By-task breakdown (all scope only) ----
     // Habits are tappable to focus; journaling and the one big task appear here
     // as tasks too (they aren't focusable scopes, so they render as static rows).
     let breakdown = '';
     if (!scope) {
-      const items = state.habits.map(h =>
-        ({ name: h.name, color: h.color, r: completionRate(h.id, 30), habitId: h.id }));
+      const items = state.habits.map(h => {
+        const r = rateOver(days, h);
+        return { name: h.name, color: h.color, r: r === null ? 0 : Math.round(r), habitId: h.id };
+      });
       if (window.journalScore && window.journalScore.firstDate())
-        items.push({ name: 'Journal', color: JOURNAL_COLOR, r: activityRate(window.journalScore, 30) });
+        items.push({ name: 'Journal', color: JOURNAL_COLOR, r: activityRate(window.journalScore, days) });
       if (window.journalBig && window.journalBig.firstAssignedDate())
-        items.push({ name: 'One big task', color: BIGTASK_COLOR, r: activityRate(window.journalBig, 30) });
+        items.push({ name: 'One big task', color: BIGTASK_COLOR, r: activityRate(window.journalBig, days) });
       items.sort((a, b) => b.r - a.r);
 
       if (items.length > 1) {
         const rows = items.map(it => {
           const inner = `
-            <span class="stats-dot" style="background:${it.color}"></span>
-            <span class="stats-rank-name">${esc(it.name)}</span>
-            <span class="stats-rank-track"><span class="stats-rank-fill" style="width:${it.r}%;background:${it.color}"></span></span>
-            <span class="stats-rank-pct">${it.r}%</span>`;
+            <span class="stats-rank-top">
+              <span class="stats-dot" style="background:${it.color}"></span>
+              <span class="stats-rank-name">${esc(it.name)}</span>
+              <span class="stats-rank-pct">${it.r}%</span>
+            </span>
+            <span class="stats-rank-track"><span class="stats-rank-fill" style="width:${it.r}%;background:${it.color}"></span></span>`;
           return it.habitId
             ? `<button class="stats-rank" data-action="stats-filter" data-habit="${it.habitId}">${inner}</button>`
             : `<div class="stats-rank static">${inner}</div>`;
@@ -982,33 +1190,43 @@
         breakdown = `
           <div class="stats-card">
             <div class="stats-card-head"><span class="stats-card-title">By task</span></div>
-            <div class="stats-card-sub">30-day completion${state.habits.some(isWeekly) ? ' (weekly habits: share of target)' : ''} · tap a habit to focus</div>
+            <div class="stats-card-sub">Completion in ${mName}${state.habits.some(isWeekly) ? ' (weekly habits: share of target)' : ''} · tap a habit to focus</div>
             <div class="stats-rank-list">${rows}</div>
           </div>`;
       }
     }
 
-    root.innerHTML = pills + overview + trendCard + rhythmCard + breakdown + historyBlock(scope) + settingsCard();
+    // ---- Calendars ----
+    const shown = scope ? [scope] : state.habits;
+    const calendars = `
+      <div class="sec-head"><h2>Calendar</h2><span class="sec-sub">Tap a day to change it</span></div>
+      <div class="cal-grid">${shown.map(h => monthCalendar(h, off)).join('')}</div>`;
+
+    root.innerHTML = nav + pills + overview + paceCard + rhythmCard + monthsCard + breakdown + calendars;
     wireStatsCharts(root);
   }
 
   // Pointer-driven crosshair/tooltip for the stats charts
   function wireStatsCharts(root) {
     root.querySelectorAll('.viz-area').forEach(svg => {
-      const pts = JSON.parse(svg.dataset.pts), geo = JSON.parse(svg.dataset.geo);
+      const cur = JSON.parse(svg.dataset.cur), old = JSON.parse(svg.dataset.old);
+      const labels = JSON.parse(svg.dataset.labels), geo = JSON.parse(svg.dataset.geo);
       const wrap = svg.closest('.viz-wrap'), tip = wrap.querySelector('.viz-tip');
       const cross = svg.querySelector('.viz-cross'), cursor = svg.querySelector('.viz-cursor');
-      const X = i => geo.padL + (i / (geo.n - 1)) * geo.pw;
+      const X = i => geo.padL + (geo.n > 1 ? (i / (geo.n - 1)) * geo.pw : geo.pw / 2);
       const Y = v => geo.padT + (1 - v / 100) * geo.ph;
       const move = e => {
         const rect = svg.getBoundingClientRect();
         const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-        let i = Math.round((cx / rect.width) * (geo.n - 1));
+        let i = Math.round(((cx / rect.width) * geo.W - geo.padL) / geo.pw * (geo.n - 1));
         i = Math.max(0, Math.min(geo.n - 1, i));
-        const p = pts[i], x = X(i), y = Y(p.v);
+        const v = cur[i] ?? null, o = old[i] ?? null;
+        if (v === null && o === null) return hide();
+        const x = X(i);
         cross.setAttribute('x1', x); cross.setAttribute('x2', x); cross.style.display = '';
-        cursor.setAttribute('cx', x); cursor.setAttribute('cy', y); cursor.style.display = '';
-        tip.innerHTML = `<strong>${p.v}%</strong> · ${esc(p.d)}`;
+        if (v !== null) { cursor.setAttribute('cx', x); cursor.setAttribute('cy', Y(v)); cursor.style.display = ''; }
+        else cursor.style.display = 'none';
+        tip.innerHTML = `Day ${esc(labels[i])}${v !== null ? ` · <strong>${v}%</strong>` : ''}${o !== null ? ` · before ${o}%` : ''}`;
         tip.style.display = '';
         tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth, (x / geo.W) * rect.width - tip.offsetWidth / 2)) + 'px';
       };
@@ -1023,7 +1241,7 @@
         const show = e => {
           const rect = svg.getBoundingClientRect();
           const cx = (e.touches ? e.touches[0].clientX : e.clientX) - rect.left;
-          tip.innerHTML = `<strong>${g.dataset.v}%</strong> · ${esc(g.dataset.full)}`;
+          tip.innerHTML = `${g.dataset.has === '1' ? `<strong>${g.dataset.v}%</strong>` : 'No data'} · ${esc(g.dataset.full)}`;
           tip.style.display = '';
           tip.style.left = Math.max(0, Math.min(rect.width - tip.offsetWidth, cx - tip.offsetWidth / 2)) + 'px';
           svg.querySelectorAll('.viz-bar').forEach(b => b.classList.toggle('on', b === g));
@@ -1042,13 +1260,13 @@
   // Render all
   // ============================================================
   function renderAll() {
-    renderProgress();
     renderToday();
     renderStats();
   }
 
-  // Let journal.js refresh the Stats aggregates after a journal edit.
-  window.renderStats = renderStats;
+  // Let journal.js refresh Stats, the hero and the notifications after a
+  // journal edit (Today's journal box is its own node, so typing isn't disturbed).
+  window.renderStats = () => { renderStats(); renderToday(); };
 
   // ============================================================
   // Modal: add / edit habit
@@ -1105,10 +1323,10 @@
                    aria-label="Color ${c}" aria-pressed="${c === chosenColor}"></div>`).join('')}
           </div>
           <div class="modal-actions">
-            ${!isNew ? `<button class="btn btn-danger" data-do="delete">Delete</button>` : ''}
             <button class="btn" data-do="cancel">Cancel</button>
             <button class="btn btn-primary" data-do="save">${isNew ? 'Add habit' : 'Save'}</button>
           </div>
+          ${!isNew ? `<button class="btn-del" data-do="delete">Delete habit</button>` : ''}
         </div>
       </div>`;
 
@@ -1195,17 +1413,8 @@
       }
 
       if (action === 'delete') {
-        if (!confirm(`Delete "${habit.name}" and all its history? This cannot be undone.`)) return;
-        try {
-          await db.deleteHabit(habit.id);
-          state.habits = state.habits.filter(x => x.id !== habit.id);
-          for (const k of [...state.entries]) {
-            if (k.startsWith(habit.id + '|')) state.entries.delete(k);
-          }
-          closeModal();
-          renderAll();
-          toast('Habit deleted');
-        } catch (err) { toast('Couldn\'t delete: ' + err.message); }
+        closeModal();
+        deleteHabitWithUndo(habit);
       }
     }, sig);
 
@@ -1219,8 +1428,48 @@
     document.getElementById('modal-root').innerHTML = '';
   }
 
+  // Deleting a habit hides it straight away and offers Undo; the delete (with
+  // all its history) only reaches the database once the Undo is gone, or when
+  // the app is put away.
+  let pendingHabitDelete = null; // { habit, keys, index }
+
+  function deleteHabitWithUndo(habit) {
+    commitHabitDelete();
+    const index = state.habits.findIndex(x => x.id === habit.id);
+    const keys = [...state.entries].filter(k => k.startsWith(habit.id + '|'));
+    state.habits = state.habits.filter(x => x.id !== habit.id);
+    keys.forEach(k => state.entries.delete(k));
+    pendingHabitDelete = { habit, keys, index };
+    renderAll();
+    toast(`Deleted ${habit.name}`, 0, {
+      label: 'Undo',
+      fn: () => {
+        const p = pendingHabitDelete;
+        if (!p || p.habit.id !== habit.id) return;
+        pendingHabitDelete = null;
+        state.habits.splice(Math.min(p.index, state.habits.length), 0, p.habit);
+        p.keys.forEach(k => state.entries.add(k));
+        renderAll();
+      },
+      onExpire: commitHabitDelete,
+    });
+  }
+
+  function commitHabitDelete() {
+    const p = pendingHabitDelete;
+    if (!p) return;
+    pendingHabitDelete = null;
+    db.deleteHabit(p.habit.id).catch(err => {
+      state.habits.splice(Math.min(p.index, state.habits.length), 0, p.habit);
+      p.keys.forEach(k => state.entries.add(k));
+      renderAll();
+      toast('Couldn\'t delete: ' + err.message, 4000);
+    });
+  }
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') commitHabitDelete(); });
+
   // ============================================================
-  // Settings (bottom of Stats): daily reminder + sign out
+  // Settings: daily reminder, weather city, account
   // ============================================================
   // reminderState: 'unknown' | 'unsupported' | 'off' | 'on' | 'busy'
   let reminderState = 'unknown';
@@ -1281,42 +1530,46 @@
     if (!body.sent) throw new Error(body.failed?.[0] || 'No device is subscribed');
   }
 
-  function settingsCard() {
-    if (reminderState === 'unknown') refreshReminderState().then(renderStats);
+  function renderSettings() {
+    const root = document.getElementById('settings-body');
+    if (reminderState === 'unknown') refreshReminderState().then(() => { renderSettings(); renderToday(); });
     let reminder;
     if (reminderState === 'unsupported') {
-      reminder = `<div class="stats-card-sub">To get reminders on iPhone, add Habits to your Home Screen (Share → Add to Home Screen) and open it from there.</div>`;
+      reminder = `
+        <div class="set-list"><div class="set-row"><span class="set-main">23:00 reminder</span><span>Not available</span></div></div>
+        <p class="set-hint">To get reminders on iPhone, add Habits to your Home Screen (Share → Add to Home Screen) and open it from there.</p>`;
     } else {
       const on   = reminderState === 'on';
       const busy = reminderState === 'busy' || reminderState === 'unknown';
       reminder = `
-        <div class="stats-card-sub">A notification at 23:00 if some habits aren't ticked yet.</div>
-        <div class="settings-row">
-          <button class="settings-btn${on ? '' : ' primary'}" data-action="reminder-toggle" ${busy ? 'disabled' : ''}>
-            ${busy ? '…' : on ? 'Turn off' : 'Turn on'}
+        <div class="set-list">
+          <button class="set-row" data-action="reminder-toggle" role="switch" aria-checked="${on}" ${busy ? 'disabled' : ''}>
+            <span class="set-main">23:00 reminder</span><span class="switch${on ? ' on' : ''}"></span>
           </button>
-          ${on ? `<button class="settings-btn" data-action="reminder-test">Send test</button>` : ''}
-        </div>`;
+          ${on ? `<button class="set-row" data-action="reminder-test"><span class="set-main">Send a test notification</span><span class="chev">›</span></button>` : ''}
+        </div>
+        <p class="set-hint">A notification at 23:00 if some habits aren't ticked yet.</p>`;
     }
     const email = window.auth.email();
-    return `
-      <div class="stats-card">
-        <div class="stats-card-head"><span class="stats-card-title">Daily reminder</span></div>
-        ${reminder}
+    const city = localStorage.getItem(WEATHER_CITY_KEY) || morningState.weather?.nearest_area?.[0]?.areaName?.[0]?.value || 'Paris';
+    root.innerHTML = `
+      <div class="section-label">Daily reminder</div>
+      ${reminder}
+      <div class="section-label">Morning</div>
+      <div class="set-list">
+        <button class="set-row" data-action="change-city"><span class="set-main">Weather city</span><span>${esc(city)} ›</span></button>
       </div>
-      <div class="stats-card">
-        <div class="stats-card-head"><span class="stats-card-title">Account</span></div>
-        <div class="stats-card-sub">${email ? `Signed in as ${esc(email)}` : 'Signed in'}</div>
-        <div class="settings-row">
-          <button class="settings-btn" data-action="sign-out">Sign out</button>
-        </div>
+      <div class="section-label">Account</div>
+      <div class="set-list">
+        <div class="set-row"><span>Signed in as</span><b>${esc(email || '—')}</b></div>
+        <button class="set-row danger" data-action="sign-out">Sign out</button>
       </div>`;
   }
 
   async function handleSettingsAction(action) {
     if (action === 'reminder-toggle') {
       const wasOn = reminderState === 'on';
-      reminderState = 'busy'; renderStats();
+      reminderState = 'busy'; renderSettings();
       try {
         if (wasOn) { await disableReminder(); toast('Reminder off'); }
         else { await enableReminder(); toast('Reminder on for 23:00'); }
@@ -1324,7 +1577,8 @@
         toast(err.message, 4000);
       }
       await refreshReminderState();
-      renderStats();
+      renderSettings();
+      renderToday();
     } else if (action === 'reminder-test') {
       try { await testReminder(); toast('Test sent'); }
       catch (err) { toast(`Test failed: ${err.message}`, 4000); }
@@ -2073,9 +2327,9 @@
       </div>`;
 
     root.innerHTML = `
+      <div class="sec-head"><h2>Morning</h2>${refreshRow}</div>
       <div class="morning-grid">
         ${yearCard}
-        ${refreshRow}
         <div class="morning-card">
           <div class="morning-card-title">Weather</div>
           ${weatherBody}
@@ -2089,7 +2343,7 @@
           ${transitBody}
         </div>
         <div class="morning-card">
-          <div class="morning-card-title">Record of the Day</div>
+          <div class="morning-card-title">Record of the day</div>
           ${recordBody}
         </div>
         <div class="morning-card">
@@ -2193,7 +2447,8 @@
         morningState.weather = null;
         morningState.weatherErr = null;
         renderMorning();
-        fetchWeather().catch(err => { morningState.weatherErr = err.message; }).then(() => renderMorning());
+        renderSettings();
+        fetchWeather().catch(err => { morningState.weatherErr = err.message; }).then(() => { renderMorning(); renderSettings(); });
       }
     } else if (action === 'toggle') {
       if (e.target.closest('[data-action="edit"]')) return;
@@ -2225,58 +2480,71 @@
       const h = el.dataset.habit;
       statsHabit = h === 'all' ? null : state.habits.find(x => x.id === h) || null;
       renderStats();
+    } else if (action === 'stats-month') {
+      statsMonth = Math.max(0, parseInt(el.dataset.month, 10) || 0);
+      renderStats();
+    } else if (action === 'go-stats') {
+      statsHabit = state.habits.find(x => x.id === el.dataset.habit) || null;
+      statsMonth = 0;
+      showView('stats');
+    } else if (action === 'add-habit') {
+      openModal(null);
+    } else if (action === 'alert') {
+      const a = alertList[+el.dataset.i];
+      if (a) { lsAdd(LS_SEEN, [a.id]); renderBell(); followAlert(a); }
+    } else if (action === 'tip-dismiss') {
+      const a = alertList[+el.dataset.i];
+      if (a) { haptic(); lsAdd(LS_HIDDEN, [a.id]); lsAdd(LS_SEEN, [a.id]); renderToday(); }
+    } else if (action === 'open-alerts') {
+      openAlerts();
     }
   });
 
+  document.getElementById('home-bell').addEventListener('click', openAlerts);
+  document.getElementById('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
+
   // Tab switching
+  function showView(v) {
+    if (state.view === 'today' && v !== 'today') {
+      state.todayWeekOffset = 0;
+      state.bigTaskDayOffset = 0;
+      renderToday();
+    }
+    state.view = v;
+    document.querySelectorAll('.tab').forEach(t => {
+      const on = t.dataset.view === v;
+      t.classList.toggle('active', on);
+      t.setAttribute('aria-selected', on ? 'true' : 'false');
+    });
+    document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.id === `view-${v}`));
+    document.getElementById('fab').setAttribute('aria-label', v === 'todo' ? 'Add todo' : 'Add habit');
+    if (v === 'stats') renderStats();
+    if (v === 'settings') renderSettings();
+    window.scrollTo(0, 0);
+  }
+
   document.querySelectorAll('.tab').forEach(btn => {
     btn.addEventListener('click', () => {
-      const v = btn.dataset.view;
-      if (state.view === v) return;
-      if (state.view === 'today' && v !== 'today') {
-        state.todayWeekOffset = 0;
-        state.bigTaskDayOffset = 0;
-      }
-      state.view = v;
-
-      document.querySelectorAll('.tab').forEach(t => {
-        t.classList.toggle('active', t === btn);
-        t.setAttribute('aria-selected', t === btn ? 'true' : 'false');
-      });
-      document.querySelectorAll('.view').forEach(s => s.classList.remove('active'));
-      document.getElementById(`view-${v}`).classList.add('active');
-
-      const titles = { morning:'Morning', today:'Today', todo:'Todo', stats:'Stats' };
-      document.getElementById('page-title').textContent =
-        v === 'morning' ? greeting() : (titles[v] || v);
-
-      // Show/hide FAB
-      document.getElementById('fab').style.display = v === 'today' ? '' : 'none';
-
-      if (v === 'morning') initMorningView();
-      renderProgress();
+      haptic();
+      if (state.view === btn.dataset.view) { window.scrollTo({ top: 0, behavior: 'smooth' }); return; }
+      showView(btn.dataset.view);
     });
   });
 
-  // FAB
-  document.getElementById('fab').addEventListener('click', () => openModal(null));
-
-  // Sticky header border on scroll
-  const mainEl = document.querySelector('#app');
-  const topbar = document.getElementById('topbar');
-  mainEl.addEventListener('scroll', () => {
-    topbar.classList.toggle('scrolled', mainEl.scrollTop > 8);
-  }, { passive: true });
-  window.addEventListener('scroll', () => {
-    topbar.classList.toggle('scrolled', window.scrollY > 8);
-  }, { passive: true });
+  // +: a new todo on the Todo tab, a new habit everywhere else
+  document.getElementById('fab').addEventListener('click', () => {
+    haptic();
+    if (state.view === 'todo' && window.todoAdd) window.todoAdd();
+    else openModal(null);
+  });
 
   // Re-fetch when the tab becomes visible / focused (picks up changes made on another device).
   // visibilitychange is more reliable than focus in iOS PWAs.
   function refetchOnReturn() {
     if (document.visibilityState !== 'visible') return;
     if (!state.loading) load();
-    if (state.view === 'morning') initMorningView();
+    renderHomeHead();
+    initMorningView();
     if (window.syncTodos) window.syncTodos();
     if (window.syncJournal) window.syncJournal();
   }
@@ -2284,15 +2552,21 @@
   document.addEventListener('visibilitychange', refetchOnReturn);
 
   // ============================================================
-  // Date label
+  // Today's header: the date and a greeting
   // ============================================================
-  document.getElementById('date-label').textContent =
-    new Date().toLocaleDateString(undefined, { weekday:'long', month:'short', day:'numeric' });
+  function renderHomeHead() {
+    document.getElementById('home-date').textContent =
+      new Date().toLocaleDateString(undefined, { weekday:'long', month:'short', day:'numeric' });
+    document.getElementById('home-hello').textContent = greeting();
+  }
 
   // ============================================================
   // Init
   // ============================================================
+  renderHomeHead();
   load();
+  refreshReminderState().then(() => { if (!state.loading) renderToday(); });
   if (window.initTodo) window.initTodo();
   if (window.initJournal) window.initJournal();
+  initMorningView();
 })();

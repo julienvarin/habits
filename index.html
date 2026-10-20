@@ -3,9 +3,11 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
-  <meta name="theme-color" content="#f5f5f7" />
+  <meta name="theme-color" content="#4a2fc4" media="(prefers-color-scheme: light)" />
+  <meta name="theme-color" content="#0b0b0f" media="(prefers-color-scheme: dark)" />
   <meta name="apple-mobile-web-app-capable" content="yes" />
-  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
   <meta name="apple-mobile-web-app-title" content="Habits" />
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="icon" href="icon.svg" type="image/svg+xml" />
@@ -16,6 +18,7 @@
 <body>
   <div id="gate" class="gate" style="display:none">
     <form id="gate-form" class="gate-form" novalidate>
+      <div class="brand">✓</div>
       <h1 class="gate-title">Habits</h1>
       <p id="gate-hint" class="gate-hint">Sign in with your email. We'll send you a 6-digit code.</p>
       <input id="gate-email" type="email" placeholder="Email" autocomplete="email" inputmode="email" required />
@@ -30,38 +33,56 @@
   </div>
 
   <div id="app" style="display:none">
-    <header class="topbar" id="topbar">
-      <div class="topbar-row1">
-        <h1 id="page-title">Today</h1>
-        <span id="date-label"></span>
-      </div>
-      <div id="progress-area"></div>
-    </header>
+    <!-- Today: the day at a glance, then the big task, habits, journal and morning feeds -->
+    <section id="view-today" class="view active">
+      <header class="home-head">
+        <div class="home-hi">
+          <div id="home-date" class="home-date"></div>
+          <h1 id="home-hello" class="home-hello"></h1>
+        </div>
+        <button id="home-bell" class="round-btn" type="button" aria-label="Notifications"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span id="home-bell-count" class="bell-count" hidden></span></button>
+      </header>
+      <div id="today-main"></div>
+      <div class="sec-head"><h2>Journal</h2></div>
+      <div id="view-journal"></div>
+      <div id="view-morning"></div>
+    </section>
 
-    <section id="view-morning" class="view"></section>
-    <section id="view-today"   class="view active"></section>
-    <section id="view-todo"    class="view"></section>
-    <section id="view-stats"   class="view"></section>
+    <section id="view-stats" class="view">
+      <header class="page-head"><h1>Stats</h1></header>
+      <div id="stats-body"></div>
+    </section>
 
-    <button id="fab" aria-label="Add habit">+</button>
+    <section id="view-todo" class="view">
+      <header class="page-head"><h1>Todo</h1></header>
+      <div id="todo-body"></div>
+    </section>
 
-    <nav class="tabs" role="tablist" aria-label="Views">
-      <button class="tab" data-view="morning" role="tab" aria-selected="false">
-        <span class="tab-icon">🌞</span>Morning
-      </button>
-      <button class="tab active" data-view="today"   role="tab" aria-selected="true">
-        <span class="tab-icon">✓</span>Today
-      </button>
-      <button class="tab" data-view="todo"    role="tab" aria-selected="false">
-        <span class="tab-icon">☐</span>Todo
-      </button>
-      <button class="tab" data-view="stats"   role="tab" aria-selected="false">
-        <span class="tab-icon">↗</span>Stats
-      </button>
+    <section id="view-settings" class="view">
+      <header class="page-head"><h1>Settings</h1></header>
+      <div id="settings-body"></div>
+    </section>
+
+    <!-- Tab bar (Today, Stats, +, Todo, Settings) -->
+    <nav class="tabbar" role="tablist" aria-label="Views">
+      <button class="tab active" data-view="today" role="tab" aria-selected="true" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10.6 3.5a2.2 2.2 0 0 1 2.8 0l6.6 5.6c.6.5 1 1.2 1 2V19a2 2 0 0 1-2 2h-3.5a1 1 0 0 1-1-1v-4.5a1 1 0 0 0-1-1h-3a1 1 0 0 0-1 1V20a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2v-7.9c0-.8.4-1.5 1-2z"/></svg>Today</button>
+      <button class="tab" data-view="stats" role="tab" aria-selected="false" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>Stats</button>
+      <button id="fab" class="tab-fab" type="button" aria-label="Add habit"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button class="tab" data-view="todo" role="tab" aria-selected="false" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 12l3 3 5-6"/></svg>Todo</button>
+      <button class="tab" data-view="settings" role="tab" aria-selected="false" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
     </nav>
 
+    <!-- Bottom sheet (notifications, edit todo) -->
+    <div id="sheet" class="sheet" hidden>
+      <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
+        <div class="sheet-grip"></div>
+        <div id="sheet-title" class="sheet-title"></div>
+        <div id="sheet-list"></div>
+      </div>
+    </div>
+
     <div id="modal-root" role="dialog" aria-modal="true"></div>
-    <div id="toast"      role="status" aria-live="polite"></div>
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden><span id="toast-msg"></span><button id="toast-act" class="toast-act" type="button" hidden></button></div>
   </div>
 
   <script>

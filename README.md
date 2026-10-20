@@ -27,7 +27,7 @@ the database only answers to emails listed in `allowed_users` (see the end of
 
 ## Supabase functions (free tier)
 
-- `morning`: calendar (iCal), U7 departures and news feeds for the Morning tab,
+- `morning`: calendar (iCal), U7 departures and news feeds for the Morning section of Today,
   fetched server-side because browsers can't read them directly.
 - `reminder`: the 23:00 push notification when habits are left unticked.
 
