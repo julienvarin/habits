@@ -223,6 +223,8 @@ body::before {
 .ring-label { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
 .ring-pct { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
 .ring-sub { font-size: 13px; opacity: .8; margin-top: 2px; }
+button.ring { color: inherit; padding: 0; }
+button.ring:active { transform: scale(.96); }
 .hero-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .hero-tile { text-align: left; color: #fff; background: rgba(255, 255, 255, .13); border-radius: 18px; padding: 13px 14px; min-width: 0; }
 button.hero-tile:active { transform: scale(.98); }
@@ -272,6 +274,30 @@ button.hero-tile:active { transform: scale(.98); }
   width: 56px; height: 56px; border-radius: 50%; margin: 0 auto 12px; display: grid; place-items: center;
   font-size: 26px; background: rgba(16, 185, 129, .14); color: var(--good-text);
 }
+/* ---- quick check: one square per habit, tap to tick today ---- */
+.qc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; margin-top: 10px; }
+.qc-sq {
+  aspect-ratio: 1; min-width: 0; border-radius: 20px; padding: 10px 8px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
+  background: color-mix(in srgb, var(--c, #34c759) 12%, var(--surface));
+  box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c, #34c759) 30%, transparent);
+  transition: transform .08s ease, background .15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+.qc-sq:active { transform: scale(.94); }
+.qc-sq.on { background: var(--c, #34c759); color: #fff; box-shadow: 0 8px 18px -10px var(--c, #34c759); }
+.qc-mark { font-size: 28px; font-weight: 800; line-height: 1; color: var(--c, #34c759); }
+.qc-sq.on .qc-mark { color: #fff; }
+.qc-name { max-width: 100%; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.qc-sub { min-height: 14px; font-size: 11px; font-weight: 600; opacity: .7; }
+.qc-cta {
+  margin-top: 14px; border-radius: 16px; padding: 13px 18px;
+  background: var(--accent); color: #fff; font-weight: 700; font-size: 15px; line-height: 1.2;
+}
+
+/* ---- Habits tab ---- */
+.habits-nav { display: flex; justify-content: flex-end; margin: 0 2px 12px; }
+
 @keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
 @keyframes slide-up { from { transform: translateY(24px); opacity: 0; } to { transform: none; opacity: 1; } }
 

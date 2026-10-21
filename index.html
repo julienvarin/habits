@@ -33,7 +33,7 @@
   </div>
 
   <div id="app" style="display:none">
-    <!-- Today: the day at a glance, then the big task, habits, journal and morning feeds -->
+    <!-- Today: the day at a glance, then the big task, weight, journal and morning feeds -->
     <section id="view-today" class="view active">
       <header class="home-head">
         <div class="home-hi">
@@ -41,11 +41,17 @@
           <h1 id="home-hello" class="home-hello"></h1>
         </div>
         <button id="home-bell" class="round-btn" type="button" aria-label="Notifications"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 8a6 6 0 0 1 12 0c0 7 3 9 3 9H3s3-2 3-9"/><path d="M10.3 21a1.94 1.94 0 0 0 3.4 0"/></svg><span id="home-bell-count" class="bell-count" hidden></span></button>
+        <button id="home-settings" class="round-btn" type="button" aria-label="Settings"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg></button>
       </header>
       <div id="today-main"></div>
       <div class="sec-head"><h2>Journal</h2></div>
       <div id="view-journal"></div>
       <div id="view-morning"></div>
+    </section>
+
+    <section id="view-habits" class="view">
+      <header class="page-head"><h1>Habits</h1><button class="round-btn" data-action="add-habit" type="button" aria-label="Add habit"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></header>
+      <div id="habits-body"></div>
     </section>
 
     <section id="view-stats" class="view">
@@ -63,16 +69,16 @@
       <div id="settings-body"></div>
     </section>
 
-    <!-- Tab bar (Today, Stats, +, Todo, Settings) -->
+    <!-- Tab bar (Today, Habits, ✓ quick check, Todo, Stats; Settings sits on Today's header) -->
     <nav class="tabbar" role="tablist" aria-label="Views">
       <button class="tab active" data-view="today" role="tab" aria-selected="true" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M10.6 3.5a2.2 2.2 0 0 1 2.8 0l6.6 5.6c.6.5 1 1.2 1 2V19a2 2 0 0 1-2 2h-3.5a1 1 0 0 1-1-1v-4.5a1 1 0 0 0-1-1h-3a1 1 0 0 0-1 1V20a1 1 0 0 1-1 1H5a2 2 0 0 1-2-2v-7.9c0-.8.4-1.5 1-2z"/></svg>Today</button>
-      <button class="tab" data-view="stats" role="tab" aria-selected="false" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>Stats</button>
-      <button id="fab" class="tab-fab" type="button" aria-label="Add habit"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button>
+      <button class="tab" data-view="habits" role="tab" aria-selected="false" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 22c4 0 7-2.7 7-7 0-3.3-2-6-4-8 0 2.5-1.5 4-3 4.5C12 8 10.5 5 8 2c0 4-3 6.5-3 11 0 5 3 9 7 9z"/></svg>Habits</button>
+      <button id="fab" class="tab-fab" type="button" aria-label="Check today's habits"><svg width="30" height="30" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg></button>
       <button class="tab" data-view="todo" role="tab" aria-selected="false" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="3" width="18" height="18" rx="5"/><path d="M8 12l3 3 5-6"/></svg>Todo</button>
-      <button class="tab" data-view="settings" role="tab" aria-selected="false" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 1 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 1 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 1 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 1 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>Settings</button>
+      <button class="tab" data-view="stats" role="tab" aria-selected="false" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>Stats</button>
     </nav>
 
-    <!-- Bottom sheet (notifications, edit todo) -->
+    <!-- Bottom sheet (notifications, quick check, edit todo) -->
     <div id="sheet" class="sheet" hidden>
       <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
         <div class="sheet-grip"></div>

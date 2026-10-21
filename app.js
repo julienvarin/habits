@@ -107,10 +107,11 @@
   async function load() {
     if (!window.SUPABASE_URL || window.SUPABASE_URL.startsWith('REPLACE_ME')) {
       document.getElementById('today-main').innerHTML = setupBanner();
+      document.getElementById('habits-body').innerHTML = setupBanner();
       return;
     }
 
-    if (state.loading) showLoader('today-main');
+    if (state.loading) { showLoader('today-main'); showLoader('habits-body'); }
 
     try {
       const [habits, entries] = await Promise.all([db.listHabits(), db.listEntries()]);
@@ -123,12 +124,14 @@
     } catch (err) {
       console.error(err);
       if (!state.loading) return; // keep what's on screen; it's only a refresh
-      document.getElementById('today-main').innerHTML = `
+      const msg = `
         <div class="empty">
           <div class="empty-icon">⚠️</div>
           <h2>Couldn't connect</h2>
           <p>${esc(err.message)}</p>
         </div>`;
+      document.getElementById('today-main').innerHTML = msg;
+      document.getElementById('habits-body').innerHTML = msg;
     }
   }
 
@@ -499,9 +502,9 @@
           <span class="hero-status ${cls}">${status}</span>
         </div>
         <div class="hero-mid">
-          <div class="ring">${ringSvg(total ? done / total : 0)}
+          <button class="ring" data-action="quick-check" aria-label="Check today's habits">${ringSvg(total ? done / total : 0)}
             <div class="ring-label"><div class="ring-pct">${total ? Math.round((done / total) * 100) : 0}%</div><div class="ring-sub">done</div></div>
-          </div>
+          </button>
           <div class="hero-text">
             <div class="hero-label">${left ? (byDay ? 'Left today' : 'Left this week') : (byDay ? 'Today' : 'This week')}</div>
             <div class="hero-big">${left ? `${left}<small> ${unit}${left > 1 ? 's' : ''}</small>` : 'All done'}</div>
@@ -530,6 +533,7 @@
   // ============================================================
   const LS_SEEN = 'habits.alertsSeen', LS_HIDDEN = 'habits.tipsHidden';
   let alertList = [];
+  let quickOpen = false; // the sheet is showing the quick check (re-rendered on every tick)
 
   function lsList(key) {
     try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; }
@@ -636,11 +640,12 @@
   }
 
   function openSheet(title, html) {
+    quickOpen = false;
     document.getElementById('sheet-title').textContent = title;
     document.getElementById('sheet-list').innerHTML = html;
     document.getElementById('sheet').hidden = false;
   }
-  function closeSheet() { document.getElementById('sheet').hidden = true; }
+  function closeSheet() { quickOpen = false; document.getElementById('sheet').hidden = true; }
   window.openSheet = openSheet;
   window.closeSheet = closeSheet;
 
@@ -667,8 +672,9 @@
       statsHabit = state.habits.find(h => h.id === a.habit) || null;
       return showView('stats');
     }
+    if (a.go === 'habits') return showView('habits');
     if (state.view !== 'today') showView('today');
-    const target = { habits: 'habits-head', bigtask: 'bigtask-head', journal: 'view-journal' }[a.go];
+    const target = { bigtask: 'bigtask-head', journal: 'view-journal' }[a.go];
     const el = target && document.getElementById(target);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (a.go === 'journal') setTimeout(() => document.getElementById('jr-day')?.focus({ preventScroll: true }), 400);
@@ -677,35 +683,92 @@
   function renderToday() {
     const main = document.getElementById('today-main');
     if (state.loading) return;
-    const today = todayStr();
 
     alertList = homeAlerts();
     renderBell();
 
-    let html = buildHero() + buildTip() + buildBigTaskTile();
+    main.innerHTML = buildHero() + buildTip() + buildBigTaskTile() + buildWeightCard();
+  }
 
-    if (state.habits.length) {
-      html += `<div class="sec-head" id="habits-head"><h2>Habits</h2>${buildWeekNav()}</div>`;
-      const groups = groupBySection(state.habits);
-      for (const [section, habits] of groups) {
-        const cards = habits.map(h => buildHabitCard(h, today)).join('');
-        if (groups.size === 1 && !section) {
-          // Single group with no section name — no header needed
-          html += `<div class="today-grid">${cards}</div>`;
-        } else {
-          html += `
-            <div class="section-group">
-              <div class="section-header">${esc(section || 'General')}</div>
-              <div class="today-grid">${cards}</div>
-            </div>`;
-        }
+  // ============================================================
+  // Render: Habits tab (cards with the week calendar, by section)
+  // ============================================================
+  function renderHabits() {
+    const root = document.getElementById('habits-body');
+    if (state.loading) return;
+    if (!state.habits.length) {
+      root.innerHTML = `
+        <div class="empty">
+          <div class="empty-icon">🌱</div>
+          <h2>No habits yet</h2>
+          <p>One thing a day, ticked here.</p>
+          <button class="qc-cta" data-action="add-habit">Add your first habit ›</button>
+        </div>`;
+      return;
+    }
+    const today = todayStr();
+    let html = `<div class="habits-nav">${buildWeekNav()}</div>`;
+    const groups = groupBySection(state.habits);
+    for (const [section, habits] of groups) {
+      const cards = habits.map(h => buildHabitCard(h, today)).join('');
+      if (groups.size === 1 && !section) {
+        // Single group with no section name — no header needed
+        html += `<div class="today-grid">${cards}</div>`;
+      } else {
+        html += `
+          <div class="section-group">
+            <div class="section-header">${esc(section || 'General')}</div>
+            <div class="today-grid">${cards}</div>
+          </div>`;
       }
     }
+    root.innerHTML = html;
+    initDragAndDrop(root);
+  }
 
-    html += buildWeightCard();
+  // ============================================================
+  // Quick check: the ✓ button's sheet, one square per habit to tick today
+  // ============================================================
+  function quickCheckHtml() {
+    if (!state.habits.length) {
+      return `<div class="sheet-empty">
+          <div class="sheet-empty-ico">🌱</div>
+          <div class="tip-title">No habits yet</div>
+          <button class="qc-cta" data-action="add-habit">Add your first habit ›</button>
+        </div>`;
+    }
+    const today  = todayStr();
+    const monday = mondayOf(new Date());
+    const squares = state.habits.map(h => {
+      const on  = hasTick(h.id, today);
+      const sub = isWeekly(h) ? `${weekCount(h.id, monday)}/${h.per_week} this week` : (streakLabel(h).streak ? `${streakLabel(h).text}` : '');
+      return `
+        <button class="qc-sq${on ? ' on' : ''}" style="--c:${h.color}" data-action="quick-toggle" data-id="${h.id}"
+                aria-pressed="${on}" aria-label="${esc(h.name)}">
+          <span class="qc-mark">${on ? '✓' : esc((h.name.trim()[0] || '·').toUpperCase())}</span>
+          <span class="qc-name">${esc(h.name)}</span>
+          <span class="qc-sub">${esc(sub)}</span>
+        </button>`;
+    }).join('');
+    return `<div class="qc-grid">${squares}</div>`;
+  }
 
-    main.innerHTML = html;
-    if (state.habits.length) initDragAndDrop(main);
+  function renderQuickCheck() {
+    if (!quickOpen) return;
+    const today = todayStr();
+    const daily = dailyHabits();
+    const done  = daily.filter(h => hasTick(h.id, today)).length;
+    const title = !state.habits.length ? 'Today'
+      : daily.length && done === daily.length ? 'Today · all done'
+      : daily.length ? `Today · ${done} of ${daily.length}` : 'Today';
+    openSheet(title, quickCheckHtml());
+    quickOpen = true;
+  }
+
+  function openQuickCheck() {
+    haptic();
+    quickOpen = true;
+    renderQuickCheck();
   }
 
   // ============================================================
@@ -1542,6 +1605,8 @@
   // ============================================================
   function renderAll() {
     renderToday();
+    renderHabits();
+    renderQuickCheck();
     renderStats();
   }
 
@@ -2759,9 +2824,9 @@
       toggle(id, date);
     } else if (action === 'today-week-back') {
       state.todayWeekOffset++;
-      renderToday();
+      renderHabits();
     } else if (action === 'today-week-fwd') {
-      if (state.todayWeekOffset > 0) { state.todayWeekOffset--; renderToday(); }
+      if (state.todayWeekOffset > 0) { state.todayWeekOffset--; renderHabits(); }
     } else if (action === 'stats-filter') {
       const h = el.dataset.habit;
       statsWeight = h === 'weight';
@@ -2799,7 +2864,12 @@
       statsMonth = 0;
       showView('stats');
     } else if (action === 'add-habit') {
+      if (quickOpen) closeSheet();
       openModal(null);
+    } else if (action === 'quick-check') {
+      openQuickCheck();
+    } else if (action === 'quick-toggle') {
+      toggle(id, todayStr());
     } else if (action === 'alert') {
       const a = alertList[+el.dataset.i];
       if (a) { lsAdd(LS_SEEN, [a.id]); renderBell(); followAlert(a); }
@@ -2814,14 +2884,18 @@
   document.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.id === 'wt-kg') saveWeightLog(); });
 
   document.getElementById('home-bell').addEventListener('click', openAlerts);
+  document.getElementById('home-settings').addEventListener('click', () => { haptic(); showView('settings'); });
   document.getElementById('sheet').addEventListener('click', e => { if (e.target.id === 'sheet') closeSheet(); });
 
   // Tab switching
   function showView(v) {
-    if (state.view === 'today' && v !== 'today') {
-      state.todayWeekOffset = 0;
+    if (state.view === 'today' && v !== 'today' && state.bigTaskDayOffset) {
       state.bigTaskDayOffset = 0;
       renderToday();
+    }
+    if (state.view === 'habits' && v !== 'habits' && state.todayWeekOffset) {
+      state.todayWeekOffset = 0;
+      renderHabits();
     }
     state.view = v;
     document.querySelectorAll('.tab').forEach(t => {
@@ -2830,7 +2904,6 @@
       t.setAttribute('aria-selected', on ? 'true' : 'false');
     });
     document.querySelectorAll('.view').forEach(s => s.classList.toggle('active', s.id === `view-${v}`));
-    document.getElementById('fab').setAttribute('aria-label', v === 'todo' ? 'Add todo' : 'Add habit');
     if (v === 'stats') renderStats();
     if (v === 'settings') renderSettings();
     window.scrollTo(0, 0);
@@ -2844,12 +2917,8 @@
     });
   });
 
-  // +: a new todo on the Todo tab, a new habit everywhere else
-  document.getElementById('fab').addEventListener('click', () => {
-    haptic();
-    if (state.view === 'todo' && window.todoAdd) window.todoAdd();
-    else openModal(null);
-  });
+  // ✓: today's habits as squares to tap
+  document.getElementById('fab').addEventListener('click', openQuickCheck);
 
   // Re-fetch when the tab becomes visible / focused (picks up changes made on another device).
   // visibilitychange is more reliable than focus in iOS PWAs.
