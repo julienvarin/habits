@@ -275,7 +275,7 @@ button.hero-tile:active { transform: scale(.98); }
   font-size: 26px; background: rgba(16, 185, 129, .14); color: var(--good-text);
 }
 /* ---- quick check: one square per habit, tap to tick today ---- */
-.qc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; margin-top: 10px; }
+.qc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 10px; margin-top: 10px; }
 .qc-sq {
   position: relative; aspect-ratio: 1; min-width: 0; border-radius: 20px; padding: 10px 8px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
@@ -286,14 +286,12 @@ button.hero-tile:active { transform: scale(.98); }
 }
 .qc-sq:active { transform: scale(.94); }
 .qc-sq.on { background: var(--c, #34c759); color: #fff; box-shadow: 0 8px 18px -10px var(--c, #34c759); }
-.qc-mark { font-size: 34px; line-height: 1; }
+.qc-mark { font-size: 36px; line-height: 1; }
 .qc-check {
-  position: absolute; top: 7px; right: 7px; width: 22px; height: 22px; border-radius: 50%;
+  position: absolute; top: 5px; right: 5px; width: 20px; height: 20px; border-radius: 50%;
   display: grid; place-items: center; font-size: 13px; font-weight: 800;
   background: #fff; color: var(--c, #34c759);
 }
-.qc-name { max-width: 100%; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.qc-sub { min-height: 14px; font-size: 11px; font-weight: 600; opacity: .7; }
 .qc-cta {
   margin-top: 14px; border-radius: 16px; padding: 13px 18px;
   background: var(--accent); color: #fff; font-weight: 700; font-size: 15px; line-height: 1.2;

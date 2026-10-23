@@ -769,17 +769,13 @@
         </div>`;
     }
     const today  = todayStr();
-    const monday = mondayOf(new Date());
     const squares = state.habits.map(h => {
-      const on  = hasTick(h.id, today);
-      const sub = isWeekly(h) ? `${weekCount(h.id, monday)}/${h.per_week} this week` : (streakLabel(h).streak ? `${streakLabel(h).text}` : '');
+      const on = hasTick(h.id, today);
       return `
         <button class="qc-sq${on ? ' on' : ''}" style="--c:${h.color}" data-action="quick-toggle" data-id="${h.id}"
                 aria-pressed="${on}" aria-label="${esc(h.name)}">
           <span class="qc-mark">${esc(habitIcon(h))}</span>
           ${on ? '<span class="qc-check" aria-hidden="true">✓</span>' : ''}
-          <span class="qc-name">${esc(h.name)}</span>
-          <span class="qc-sub">${esc(sub)}</span>
         </button>`;
     }).join('');
     return `<div class="qc-grid">${squares}</div>`;
