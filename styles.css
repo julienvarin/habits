@@ -277,7 +277,7 @@ button.hero-tile:active { transform: scale(.98); }
 /* ---- quick check: one square per habit, tap to tick today ---- */
 .qc-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px; margin-top: 10px; }
 .qc-sq {
-  aspect-ratio: 1; min-width: 0; border-radius: 20px; padding: 10px 8px;
+  position: relative; aspect-ratio: 1; min-width: 0; border-radius: 20px; padding: 10px 8px;
   display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 4px;
   background: color-mix(in srgb, var(--c, #34c759) 12%, var(--surface));
   box-shadow: inset 0 0 0 2px color-mix(in srgb, var(--c, #34c759) 30%, transparent);
@@ -286,8 +286,12 @@ button.hero-tile:active { transform: scale(.98); }
 }
 .qc-sq:active { transform: scale(.94); }
 .qc-sq.on { background: var(--c, #34c759); color: #fff; box-shadow: 0 8px 18px -10px var(--c, #34c759); }
-.qc-mark { font-size: 28px; font-weight: 800; line-height: 1; color: var(--c, #34c759); }
-.qc-sq.on .qc-mark { color: #fff; }
+.qc-mark { font-size: 34px; line-height: 1; }
+.qc-check {
+  position: absolute; top: 7px; right: 7px; width: 22px; height: 22px; border-radius: 50%;
+  display: grid; place-items: center; font-size: 13px; font-weight: 800;
+  background: #fff; color: var(--c, #34c759);
+}
 .qc-name { max-width: 100%; font-size: 13px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .qc-sub { min-height: 14px; font-size: 11px; font-weight: 600; opacity: .7; }
 .qc-cta {
@@ -350,7 +354,7 @@ button.hero-tile:active { transform: scale(.98); }
 .card-header { display: flex; align-items: center; gap: 10px; }
 .card-color-dot {
   flex: 0 0 auto; width: 34px; height: 34px; border-radius: 11px;
-  display: grid; place-items: center; font-size: 15px; font-weight: 800;
+  display: grid; place-items: center; font-size: 19px; line-height: 1;
   background: color-mix(in srgb, var(--c, #34c759) 16%, transparent);
   color: var(--c, #34c759);
 }
@@ -635,6 +639,18 @@ button.set-row:disabled { opacity: .5; }
 }
 .modal input[type=text]::placeholder { color: var(--placeholder); }
 .modal input[type=text]:focus { outline: none; border-color: var(--accent); }
+.icon-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(44px, 1fr)); gap: 6px; margin-bottom: 20px; }
+.icon-opt {
+  height: 44px; border-radius: 12px; font-size: 22px; line-height: 1;
+  display: grid; place-items: center; background: var(--surface-2);
+}
+.icon-opt:active { transform: scale(.92); }
+.icon-opt.active { box-shadow: inset 0 0 0 2px var(--text); background: var(--surface); }
+.icon-opt.auto { grid-column: span 2; grid-auto-flow: column; gap: 6px; }
+.icon-opt.auto small { font-size: 12px; font-weight: 700; color: var(--muted); }
+.modal input.icon-other {
+  grid-column: span 2; height: 44px; min-width: 0; margin: 0; padding: 0 10px; text-align: center; font-size: 15px;
+}
 .color-grid { display: flex; flex-wrap: wrap; gap: 12px; margin-bottom: 24px; }
 .color-swatch {
   width: 38px; height: 38px; border-radius: 50%; cursor: pointer;

@@ -282,6 +282,37 @@
   }
 
   // ============================================================
+  // Icons: the habit's own emoji, or one guessed from its name
+  // ============================================================
+  const ICON_CHOICES = [
+    '📚','🏃','🧘','💪','🚶','🚴','🏊','🤸','💧','🥗','🍎','🚭',
+    '🍬','☕','🍷','😴','🛏️','🦷','🧴','💊','✍️','📓','🧠','🎸',
+    '🎨','💻','🗣️','📵','🧹','🪴','🐕','💰','🙏','☀️','🌙','⭐',
+  ];
+  const ICON_GUESSES = [
+    [/read|book|lire|lecture/, '📚'], [/run|jog|cours/, '🏃'], [/meditat|breath|respir/, '🧘'],
+    [/stretch|yoga|étire|etire|mobility/, '🤸'], [/gym|workout|lift|push|pull|sport|muscu|abs|plank/, '💪'],
+    [/walk|steps|marche|pas/, '🚶'], [/bike|cycl|vélo|velo/, '🚴'], [/swim|nage|piscine/, '🏊'],
+    [/water|drink|eau|hydrat/, '💧'], [/sugar|sucre|sweet|candy/, '🍬'], [/smok|cigar|clope/, '🚭'],
+    [/alcohol|beer|wine|alcool|bière|vin/, '🍷'], [/coffee|café|cafe|caffeine/, '☕'],
+    [/veg|fruit|salad|eat|food|meal|cook|légume|manger|cuisine/, '🥗'],
+    [/sleep|bed|dormir|coucher|nap/, '😴'], [/floss|teeth|tooth|dent/, '🦷'], [/skin|cream|crème|sunscreen/, '🧴'],
+    [/vitamin|pill|supplement|medic|médic/, '💊'], [/journal|diary|journal/, '📓'], [/write|writ|écri|blog/, '✍️'],
+    [/learn|study|course|duolingo|langu|anglais|english|german|allemand|apprend/, '🧠'],
+    [/guitar|piano|music|musique|instrument|practice/, '🎸'], [/draw|paint|dessin|art|sketch/, '🎨'],
+    [/code|coding|program|dev/, '💻'], [/phone|screen|social|instagram|tiktok|écran/, '📵'],
+    [/clean|tidy|ménage|menage|range/, '🧹'], [/plant|garden|jardin/, '🪴'], [/dog|chien/, '🐕'],
+    [/money|budget|save|saving|spend|argent|épargne/, '💰'], [/pray|gratitude|grateful|gratitude|merci/, '🙏'],
+    [/morning|wake|réveil|matin|sun/, '☀️'], [/evening|night|soir/, '🌙'], [/call|family|friend|famille|ami/, '🗣️'],
+  ];
+  function guessIcon(name) {
+    const n = String(name || '').toLowerCase();
+    for (const [re, icon] of ICON_GUESSES) if (re.test(n)) return icon;
+    return '⭐';
+  }
+  function habitIcon(h) { return h.icon || guessIcon(h.name); }
+
+  // ============================================================
   // Render: Today (card layout with embedded calendar)
   // ============================================================
   function buildCardCal(habitId) {
@@ -335,7 +366,7 @@
         <div class="card-header">
           <div class="card-drag-handle" aria-label="Drag to reorder">⠿</div>
           <button class="card-color-dot" data-action="toggle" data-id="${h.id}"
-                  aria-label="${done ? 'Untick' : 'Tick'} ${esc(h.name)} today">${met ? '✓' : esc((h.name.trim()[0] || '·').toUpperCase())}</button>
+                  aria-label="${done ? 'Untick' : 'Tick'} ${esc(h.name)} today">${esc(habitIcon(h))}</button>
           <div class="card-main">
             <h2 class="card-name">${esc(h.name)}</h2>
             <div class="card-sub${met ? ' met' : ''}">${sub}</div>
@@ -745,7 +776,8 @@
       return `
         <button class="qc-sq${on ? ' on' : ''}" style="--c:${h.color}" data-action="quick-toggle" data-id="${h.id}"
                 aria-pressed="${on}" aria-label="${esc(h.name)}">
-          <span class="qc-mark">${on ? '✓' : esc((h.name.trim()[0] || '·').toUpperCase())}</span>
+          <span class="qc-mark">${esc(habitIcon(h))}</span>
+          ${on ? '<span class="qc-check" aria-hidden="true">✓</span>' : ''}
           <span class="qc-name">${esc(h.name)}</span>
           <span class="qc-sub">${esc(sub)}</span>
         </button>`;
@@ -1628,6 +1660,7 @@
     let chosenColor = habit?.color ?? COLORS[state.habits.length % COLORS.length];
     let chosenSection = habit?.section ?? '';
     let chosenPerWeek = isWeekly(habit) ? habit.per_week : null; // null = daily
+    let chosenIcon = habit?.icon ?? null; // null = guessed from the name
     const sections = existingSections();
     const root = document.getElementById('modal-root');
 
@@ -1660,6 +1693,16 @@
             ${[null, 1, 2, 3, 4, 5, 6].map(n => `
               <button type="button" class="section-pill ${n === chosenPerWeek ? 'active' : ''}"
                       data-freq="${n ?? ''}">${n ? `${n}×/wk` : 'Daily'}</button>`).join('')}
+          </div>
+          <label class="field-label">Icon</label>
+          <div class="icon-grid" id="icon-grid">
+            <button type="button" class="icon-opt auto ${chosenIcon ? '' : 'active'}" data-icon=""
+                    aria-label="Automatic icon"><span id="icon-auto">${esc(guessIcon(habit?.name))}</span><small>Auto</small></button>
+            ${ICON_CHOICES.map(i => `
+              <button type="button" class="icon-opt ${i === chosenIcon ? 'active' : ''}" data-icon="${i}">${i}</button>`).join('')}
+            <input id="m-icon" class="icon-other" type="text" maxlength="8" placeholder="Other"
+                   value="${chosenIcon && !ICON_CHOICES.includes(chosenIcon) ? esc(chosenIcon) : ''}"
+                   aria-label="Any other emoji" autocomplete="off" />
           </div>
           <label class="field-label">Color</label>
           <div class="color-grid" id="color-grid">
@@ -1715,6 +1758,26 @@
         p.classList.toggle('active', p === pill));
     }, sig);
 
+    const iconOther = root.querySelector('#m-icon');
+    function markIcon() {
+      root.querySelectorAll('.icon-opt').forEach(o =>
+        o.classList.toggle('active', (o.dataset.icon || null) === chosenIcon));
+    }
+    input.addEventListener('input', () => {
+      root.querySelector('#icon-auto').textContent = guessIcon(input.value);
+    }, sig);
+    root.querySelector('#icon-grid').addEventListener('click', e => {
+      const opt = e.target.closest('.icon-opt');
+      if (!opt) return;
+      chosenIcon = opt.dataset.icon || null;
+      iconOther.value = '';
+      markIcon();
+    }, sig);
+    iconOther.addEventListener('input', () => {
+      chosenIcon = iconOther.value.trim() || null;
+      markIcon();
+    }, sig);
+
     root.querySelector('#color-grid').addEventListener('click', e => {
       const sw = e.target.closest('.color-swatch');
       if (!sw) return;
@@ -1740,6 +1803,8 @@
           // Only send per_week when it's set or changing, so habits keep saving
           // before the per_week column exists (see schema.sql).
           const freq = (chosenPerWeek || (habit && habit.per_week)) ? { per_week: chosenPerWeek } : {};
+          // Same for icon: only sent once one is picked (or cleared).
+          if (chosenIcon || (habit && habit.icon)) freq.icon = chosenIcon;
           if (isNew) {
             const h = await db.addHabit(name, chosenColor, state.habits.length, section, freq);
             state.habits.push(h);
@@ -1751,8 +1816,8 @@
           closeModal();
           renderAll();
         } catch (err) {
-          toast(/per_week/.test(err.message)
-            ? 'Run the per_week line from schema.sql in Supabase first'
+          toast(/per_week|icon/.test(err.message)
+            ? 'Run schema.sql in Supabase first (new habit columns)'
             : 'Couldn\'t save: ' + err.message, 4000);
         }
         return;
