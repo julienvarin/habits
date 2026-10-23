@@ -405,32 +405,80 @@
         <button class="bigtask-nav-btn" data-action="bigtask-next" aria-label="Next day" ${off === 0 ? 'disabled' : ''}>›</button>
       </div>`;
   }
+  // The task text is editable in place. It still comes from (and saves to) the
+  // previous day's "Something to do tomorrow", so the journal stays in sync.
   function buildBigTaskTile() {
     const jb = window.journalBig;
     if (!jb) return '';
     const dstr = selectedBigTaskDate();
     const text = jb.textFor(dstr);
-    const done = jb.doneFor(dstr);
+    const done = !!text && jb.doneFor(dstr);
+    const isToday = state.bigTaskDayOffset === 0;
     const head = `<div class="sec-head" id="bigtask-head"><h2>One big task</h2>${buildBigTaskNav(dstr)}</div>`;
-    if (!text) {
-      const isToday = state.bigTaskDayOffset === 0;
-      const msg = isToday
-        ? 'Write “Something to do tomorrow” in your journal below. It shows up here tomorrow.'
-        : 'No big task set for this day.';
-      return head + `
-        <div class="bigtask-tile empty">
-          <p class="bigtask-empty"><span class="bt-ico">◎</span><span>${msg}</span></p>
-        </div>`;
-    }
     return head + `
-      <div class="bigtask-tile ${done ? 'done' : ''}">
-        <button class="bigtask-check ${done ? 'done' : ''}" data-action="toggle-bigtask"
+      <div class="bigtask-tile${done ? ' done' : ''}${text ? '' : ' empty'}">
+        <button class="bigtask-check" data-action="toggle-bigtask" ${text ? '' : 'disabled'}
                 aria-label="${done ? 'Mark big task not done' : 'Mark big task done'}">
           <span class="bigtask-box"></span>
-          <span class="bigtask-text">${esc(text)}</span>
         </button>
+        <textarea id="bigtask-input" class="bigtask-input" rows="1" maxlength="500" enterkeyhint="done"
+                  aria-label="One big task" spellcheck="true"
+                  placeholder="${isToday ? 'What’s the one thing today?' : 'No big task this day'}">${esc(text)}</textarea>
       </div>`;
   }
+
+  function sizeBigTask(el) {
+    el.style.height = 'auto';
+    el.style.height = el.scrollHeight + 'px';
+  }
+
+  // Update the tile in place when it's already there, so a re-render (after a
+  // save, a sync or a tick) never steals the caret or swallows a tap on the box.
+  function renderBigTask(wrap) {
+    const jb = window.journalBig;
+    if (!jb) { wrap.innerHTML = ''; return; }
+    const tile  = wrap.querySelector('.bigtask-tile');
+    const input = wrap.querySelector('#bigtask-input');
+    if (!tile || !input) {
+      wrap.innerHTML = buildBigTaskTile();
+      const el = wrap.querySelector('#bigtask-input');
+      if (el) sizeBigTask(el);
+      return;
+    }
+    const dstr = selectedBigTaskDate();
+    const text = jb.textFor(dstr);
+    const done = !!text && jb.doneFor(dstr);
+    const nav = wrap.querySelector('.bigtask-nav');
+    if (nav) nav.outerHTML = buildBigTaskNav(dstr);
+    if (document.activeElement !== input && input.value !== text) input.value = text;
+    const has = !!input.value.trim();
+    tile.classList.toggle('done', done && has);
+    tile.classList.toggle('empty', !has);
+    const btn = tile.querySelector('.bigtask-check');
+    btn.disabled = !has;
+    btn.setAttribute('aria-label', done ? 'Mark big task not done' : 'Mark big task done');
+    input.placeholder = state.bigTaskDayOffset === 0 ? 'What’s the one thing today?' : 'No big task this day';
+    sizeBigTask(input);
+  }
+
+  // Typing in the tile: save (debounced in journal.js) and enable the check
+  // once there's text, without re-rendering the tile under the caret.
+  document.addEventListener('input', e => {
+    const el = e.target;
+    if (el.id !== 'bigtask-input' || !window.journalBig) return;
+    sizeBigTask(el);
+    window.journalBig.setTextFor(selectedBigTaskDate(), el.value);
+    const tile = el.closest('.bigtask-tile');
+    const has = !!el.value.trim();
+    tile.classList.toggle('empty', !has);
+    tile.querySelector('.bigtask-check').disabled = !has;
+  });
+  document.addEventListener('keydown', e => {
+    if (e.target.id === 'bigtask-input' && e.key === 'Enter') { e.preventDefault(); e.target.blur(); }
+  });
+  document.addEventListener('focusout', e => {
+    if (e.target.id === 'bigtask-input' && window.journalBig) window.journalBig.flush();
+  });
 
   function buildWeekNav() {
     const off        = state.todayWeekOffset;
@@ -510,12 +558,7 @@
     const done  = byDay ? daily.filter(h => hasTick(h.id, today)).length : week.done;
     const total = byDay ? daily.length : week.total;
     const left  = total - done;
-    const hour  = new Date().getHours();
-    const [status, cls] = !left ? ['All done', '']
-      : hour >= 18 ? [`${left} to go tonight`, 'warn']
-      : [`${done} of ${total} done`, 'calm'];
     const daysLeft = 7 - ((new Date().getDay() + 6) % 7);
-    const unit = byDay ? 'habit' : 'tick';
 
     // Longest streak running right now, and the last 7 days against the 7 before.
     let best = null;
@@ -529,16 +572,14 @@
     return `
       <div class="hero">
         <div class="hero-top">
-          <span class="hero-pill">${byDay ? "Today's habits" : 'This week'}</span>
-          <span class="hero-status ${cls}">${status}</span>
+          <span class="hero-pill">${byDay ? 'Habits' : 'This week'}</span>
         </div>
         <div class="hero-mid">
           <button class="ring" data-action="quick-check" aria-label="Check today's habits">${ringSvg(total ? done / total : 0)}
             <div class="ring-label"><div class="ring-pct">${total ? Math.round((done / total) * 100) : 0}%</div><div class="ring-sub">done</div></div>
           </button>
           <div class="hero-text">
-            <div class="hero-label">${left ? (byDay ? 'Left today' : 'Left this week') : (byDay ? 'Today' : 'This week')}</div>
-            <div class="hero-big">${left ? `${left}<small> ${unit}${left > 1 ? 's' : ''}</small>` : 'All done'}</div>
+            <div class="hero-big">${left ? `${left}<small> to go</small>` : 'All done'}</div>
             <div class="hero-of">${left ? `of ${total} · ${byDay ? `${timeLeftToday()} left` : `${daysLeft} day${daysLeft > 1 ? 's' : ''} left`}` : 'Everything ticked. Nice.'}</div>
             ${byDay && week.total ? `<div class="hero-of faint">Weekly goals: ${week.done}/${week.total} this week</div>` : ''}
           </div>
@@ -657,7 +698,8 @@
 
   function buildTip() {
     const hidden = lsList(LS_HIDDEN);
-    const i = alertList.findIndex(a => !hidden.includes(a.id));
+    // The big task tile sits right below, so its reminder stays in the bell only.
+    const i = alertList.findIndex(a => !hidden.includes(a.id) && a.go !== 'bigtask');
     if (i < 0) return '<div id="home-tip"></div>';
     const more = alertList.length - 1;
     return `
@@ -704,8 +746,10 @@
       return showView('stats');
     }
     if (a.go === 'habits') return showView('habits');
-    if (state.view !== 'today') showView('today');
-    const target = { bigtask: 'bigtask-head', journal: 'view-journal' }[a.go];
+    // The journal sits at the bottom of Habits; the big task is on Today.
+    const view = a.go === 'journal' ? 'habits' : 'today';
+    if (state.view !== view) showView(view);
+    const target = { bigtask: 'bigtask-head', journal: 'journal-head' }[a.go];
     const el = target && document.getElementById(target);
     if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     if (a.go === 'journal') setTimeout(() => document.getElementById('jr-day')?.focus({ preventScroll: true }), 400);
@@ -718,7 +762,13 @@
     alertList = homeAlerts();
     renderBell();
 
-    main.innerHTML = buildHero() + buildTip() + buildBigTaskTile() + buildWeightCard();
+    // Fixed slots, so the big task can be updated in place (see renderBigTask).
+    if (!document.getElementById('today-bigtask')) {
+      main.innerHTML = '<div id="today-top"></div><div id="today-bigtask"></div><div id="today-weight"></div>';
+    }
+    document.getElementById('today-top').innerHTML = buildHero() + buildTip();
+    renderBigTask(document.getElementById('today-bigtask'));
+    document.getElementById('today-weight').innerHTML = buildWeightCard();
   }
 
   // ============================================================

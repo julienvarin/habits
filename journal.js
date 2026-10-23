@@ -256,6 +256,28 @@
     persist(dstr);
   }
 
+  // Edit the big task for `dstr` directly (from Today). It is stored where it
+  // has always lived, as the previous day's "Something to do tomorrow", so the
+  // journal and the Today tile stay one and the same.
+  let bigTimer = null, bigPending = null;
+  function setBigText(dstr, text) {
+    const prev = fmtDate(shiftDays(parseDate(dstr), -1));
+    const e = getEntry(prev);
+    e.tomorrow = text;
+    entries.set(prev, e);
+    // Keep the journal's field in step when it is showing that day.
+    const tmrEl = document.getElementById('jr-tomorrow');
+    if (prev === viewDate && tmrEl && document.activeElement !== tmrEl) { tmrEl.value = text; autosize(tmrEl); }
+    clearTimeout(bigTimer);
+    bigPending = prev;
+    bigTimer = setTimeout(flushBig, 700);
+  }
+  function flushBig() {
+    clearTimeout(bigTimer);
+    bigTimer = null;
+    if (bigPending) { const d = bigPending; bigPending = null; persist(d); renderMeta(); }
+  }
+
   window.journalBig = {
     todayText:  () => bigTaskFor(todayStr()),
     todayDone:  () => bigDoneOn(todayStr()),
@@ -263,6 +285,8 @@
     textFor:    bigTaskFor,
     doneFor:    bigDoneOn,
     toggleFor:  (dstr) => setBigDone(dstr, !bigDoneOn(dstr)),
+    setTextFor: setBigText,
+    flush:      flushBig,
     firstAssignedDate: () => { const a = bigAssignedDates(); return a[0] || null; },
     activeOn:   bigActiveOn,
     doneOn:     bigDoneOn,
@@ -283,8 +307,10 @@
   }
 
   function persist(dstr) {
-    clearTimeout(saveTimer);
-    saveTimer = null;
+    // The editor's debounce only ever covers viewDate; the big task (Today)
+    // can write another day, which must not cancel a pending editor save.
+    const isView = dstr === viewDate;
+    if (isView) { clearTimeout(saveTimer); saveTimer = null; }
     const e = entries.get(dstr);
     if (!e) return;
 
@@ -292,7 +318,7 @@
     if (empty) {
       entries.delete(dstr);
       saveCache();
-      setStatus('');
+      if (isView) setStatus('');
       markDirty(dstr);
       if (window.db) {
         window.db.deleteJournal(dstr)
@@ -305,7 +331,7 @@
 
     e.updatedAt = Date.now();
     saveCache();
-    setStatus('Saved');
+    if (isView) setStatus('Saved');
     markDirty(dstr);
     const row = toRow(e);
     if (window.db) {
@@ -325,6 +351,7 @@
   // Flush any pending debounce immediately (called before navigating away / leaving page)
   function flushPending() {
     if (saveTimer) persist(viewDate);
+    if (bigTimer) flushBig();
   }
 
   function setStatus(text) {
