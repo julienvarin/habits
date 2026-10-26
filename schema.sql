@@ -163,3 +163,30 @@ begin
     execute format('create policy "owner all" on %I for all to authenticated using (is_owner()) with check (is_owner())', t);
   end loop;
 end $$;
+
+-- ============================================================
+-- One-off data updates. Each runs once: its marker row in prefs stops it
+-- from overriding later reorders or icon changes made in the app.
+-- ============================================================
+-- 2026-10: habit order and icons, matched by name.
+do $$
+declare
+  r record;
+begin
+  insert into prefs (key, value) values ('migration:habit_order_2026_10', now()::text)
+    on conflict (key) do nothing;
+  if not found then return; end if;
+  for r in select * from (values
+    (0, '%morning%',     '☀️'),
+    (1, '%shoulder%',    '🤸'),
+    (2, '%gym%',         '🏃'),
+    (3, '%inspecteur%',  '🕵️'),
+    (4, '%music%',       '🎧'),
+    (5, '%brush%',       '🦷'),
+    (6, '%midnight%',    '🚭'),
+    (7, '%bed%',         '🛏️')
+  ) as v(pos, pattern, icon) loop
+    update habits set sort_order = r.pos, icon = r.icon
+      where not archived and name ilike r.pattern;
+  end loop;
+end $$;
