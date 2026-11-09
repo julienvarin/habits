@@ -3041,6 +3041,7 @@
     if (window.syncTodos) window.syncTodos();
     if (window.syncJournal) window.syncJournal();
     if (window.weight) window.weight.sync();
+    if (window.meals) window.meals.sync();
   }
   window.addEventListener('focus', refetchOnReturn);
   document.addEventListener('visibilitychange', refetchOnReturn);
@@ -3063,5 +3064,6 @@
   if (window.initTodo) window.initTodo();
   if (window.initJournal) window.initJournal();
   if (window.weight) window.weight.init();
+  if (window.meals) window.meals.init();
   initMorningView();
 })();

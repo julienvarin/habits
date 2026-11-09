@@ -255,6 +255,23 @@
         body: JSON.stringify({ key, value }),
       });
     },
+    listMeals() {
+      return req("/meals?select=date,slot,name,ingredients,done&order=date.asc", { headers: headers() });
+    },
+    upsertMeal(row) {
+      // Upsert on the (date, slot) primary key.
+      return req("/meals", {
+        method: "POST",
+        headers: headers({ Prefer: "return=minimal,resolution=merge-duplicates" }),
+        body: JSON.stringify(row),
+      });
+    },
+    deleteMeal(date, slot) {
+      return req("/meals?date=eq." + encodeURIComponent(date) + "&slot=eq." + encodeURIComponent(slot), {
+        method: "DELETE",
+        headers: headers(),
+      });
+    },
     deleteJournal(date) {
       return req("/journal?date=eq." + encodeURIComponent(date), {
         method: "DELETE",
