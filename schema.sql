@@ -100,6 +100,20 @@ create table if not exists prefs (
 );
 alter table prefs enable row level security;
 
+-- Meal planner: one meal per day and slot (lunch / dinner), see meals.js.
+-- `ingredients` is one per line; `done` = ticked as added.
+create table if not exists meals (
+  date date not null,
+  slot text not null check (slot in ('lunch', 'dinner')),
+  name text not null,
+  ingredients text,
+  done boolean not null default false,
+  updated_at bigint,
+  created_at timestamptz not null default now(),
+  primary key (date, slot)
+);
+alter table meals enable row level security;
+
 -- Web Push subscriptions for the daily reminder (one row per device).
 create table if not exists push_subscriptions (
   endpoint text primary key,
@@ -147,7 +161,7 @@ grant execute on function is_owner() to authenticated;
 -- below then limit them to allowed_users.
 grant usage on schema public to authenticated;
 grant select, insert, update, delete
-  on habits, entries, todos, journal, push_subscriptions, weights, prefs
+  on habits, entries, todos, journal, push_subscriptions, weights, prefs, meals
   to authenticated;
 -- The Edge Functions (reminder) use the service role; RLS doesn't apply to
 -- it, but it still needs table privileges in projects without default grants.
@@ -157,7 +171,7 @@ grant all on all tables in schema public to service_role;
 do $$
 declare t text;
 begin
-  foreach t in array array['habits', 'entries', 'todos', 'journal', 'push_subscriptions', 'weights', 'prefs'] loop
+  foreach t in array array['habits', 'entries', 'todos', 'journal', 'push_subscriptions', 'weights', 'prefs', 'meals'] loop
     execute format('drop policy if exists "anon all" on %I', t);
     execute format('drop policy if exists "owner all" on %I', t);
     execute format('create policy "owner all" on %I for all to authenticated using (is_owner()) with check (is_owner())', t);

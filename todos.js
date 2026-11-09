@@ -17,6 +17,8 @@
   //   'stress' — a stress board (kind 'stress'): tasks are chips dragged on a
   //              2-D board, X = complexity, Y = stress. `sx`/`sy` (0..1) hold
   //              each chip's position.
+  //   'meals'  — the week's meal planner (lunch and dinner per day); its data
+  //              and markup live in meals.js (window.meals), not in `todos`.
   let viewMode   = 'todos';
   let activeList = null;
 
@@ -104,7 +106,7 @@
   function loadMode() {
     try {
       const m = JSON.parse(localStorage.getItem(MODE_KEY) || '{}');
-      viewMode   = ['todos', 'lists', 'stress'].includes(m.viewMode) ? m.viewMode : 'todos';
+      viewMode   = ['todos', 'lists', 'stress', 'meals'].includes(m.viewMode) ? m.viewMode : 'todos';
       activeList = m.activeList || null;
     } catch { viewMode = 'todos'; activeList = null; }
   }
@@ -360,7 +362,7 @@
   }
 
   function setMode(mode) {
-    if (!['todos', 'lists', 'stress'].includes(mode)) return;
+    if (!['todos', 'lists', 'stress', 'meals'].includes(mode)) return;
     if (mode === viewMode) return;
     viewMode = mode;
     if (viewMode === 'lists' && !activeList) {
@@ -390,10 +392,11 @@
                role="tab" aria-selected="${viewMode === mode}">${txt}</button>`;
     const seg = `
       <div class="td-seg" role="tablist" aria-label="Todo mode">
-        ${segBtn('todos', 'Todos')}${segBtn('lists', 'Lists')}${segBtn('stress', 'Stress')}
+        ${segBtn('todos', 'Todos')}${segBtn('lists', 'Lists')}${segBtn('stress', 'Stress')}${segBtn('meals', 'Meals')}
       </div>`;
 
-    const body = viewMode === 'lists'  ? listsBody()
+    const body = viewMode === 'meals'  ? (window.meals ? window.meals.html() : '')
+               : viewMode === 'lists'  ? listsBody()
                : viewMode === 'stress' ? stressBody()
                : todosBody();
     root.innerHTML = seg + body;
@@ -623,6 +626,7 @@
     if (!root) return;
 
     root.addEventListener('click', e => {
+      if (viewMode === 'meals' && window.meals?.click(e)) return;
       const el     = e.target.closest('[data-taction]');
       const action = el?.dataset.taction;
       const id     = el?.dataset.id;
@@ -737,6 +741,7 @@
   // The tab bar's +: jump to the add box (or start a list when there's none).
   function focusAdd() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
+    if (viewMode === 'meals') { window.meals?.focusAdd(); return; }
     if (viewMode === 'lists' && !activeList) {
       const name = prompt('List name (e.g. Movies, Books, Buy):')?.trim();
       if (name) setActiveList(name);
