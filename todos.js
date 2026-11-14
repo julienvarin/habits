@@ -390,9 +390,11 @@
     const segBtn = (mode, txt) =>
       `<button class="td-seg-btn ${viewMode === mode ? 'on' : ''}" data-tmode="${mode}"
                role="tab" aria-selected="${viewMode === mode}">${txt}</button>`;
+    const stressOn = window.feature && window.feature('stress');
+    if (viewMode === 'stress' && !stressOn) viewMode = 'todos';
     const seg = `
       <div class="td-seg" role="tablist" aria-label="Todo mode">
-        ${segBtn('todos', 'Todos')}${segBtn('lists', 'Lists')}${segBtn('stress', 'Stress')}${segBtn('meals', 'Meals')}
+        ${segBtn('todos', 'Todos')}${segBtn('lists', 'Lists')}${stressOn ? segBtn('stress', 'Stress') : ''}${segBtn('meals', 'Meals')}
       </div>`;
 
     const body = viewMode === 'meals'  ? (window.meals ? window.meals.html() : '')
