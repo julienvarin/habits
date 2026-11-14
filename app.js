@@ -660,7 +660,7 @@
       out.push({ id: `tomorrow@${today}`, icon: '◎', go: 'journal', title: "Pick tomorrow's big task",
         body: 'Write it under “Something to do tomorrow” in your journal.' });
     }
-    const wt = window.weight;
+    const wt = W();
     if (wt && hour >= 6 && hour < 12 && wt.get(today) == null) {
       // Only for someone who weighs in most days
       let recent = 0;
@@ -1422,7 +1422,8 @@
   // ============================================================
   // Weight: a card on Today, a log sheet, and a view in Stats
   // ============================================================
-  const W = () => window.weight;
+  // null while the weight tracker is turned off in Settings → Sections.
+  const W = () => window.feature('weight') ? window.weight : null;
   const kgStr = kg => `${kg.toFixed(1)}`;
   function shortDate(dstr) {
     if (dstr === todayStr()) return 'Today';
@@ -2039,18 +2040,18 @@
       ${reminder}
       <div class="section-label">Sections</div>
       <div class="set-list">
-        ${[['journal', 'Journal'], ['stress', 'Stress board']].map(([k, label]) => {
+        ${[['journal', 'Journal'], ['stress', 'Stress board'], ['weight', 'Weight tracker']].map(([k, label]) => {
           const on = window.feature(k);
           return `<button class="set-row" data-action="feature-toggle" data-id="${k}" role="switch" aria-checked="${on}">
             <span class="set-main">${label}</span><span class="switch${on ? ' on' : ''}"></span></button>`;
         }).join('')}
       </div>
-      <p class="set-hint">The journal sits at the bottom of Habits; the stress board is a tab in Todo.</p>
-      <div class="section-label">Weight</div>
+      <p class="set-hint">The journal sits at the bottom of Habits, the stress board is a tab in Todo, and the weight tracker is a card on Today and a chart in Stats.</p>
+      ${W() ? `<div class="section-label">Weight</div>
       <div class="set-list">
-        <button class="set-row" data-action="set-goal"><span class="set-main">Goal weight</span><span>${window.weight?.goal() ? `${window.weight.goal().toFixed(1)} kg` : 'None'} ›</span></button>
+        <button class="set-row" data-action="set-goal"><span class="set-main">Goal weight</span><span>${W().goal() ? `${W().goal().toFixed(1)} kg` : 'None'} ›</span></button>
       </div>
-      <p class="set-hint">Shown as a dashed line on the weight chart, with how far is left on Today.</p>
+      <p class="set-hint">Shown as a dashed line on the weight chart, with how far is left on Today.</p>` : ''}
       <div class="section-label">Morning</div>
       <div class="set-list">
         <button class="set-row" data-action="change-city"><span class="set-main">Weather city</span><span>${esc(city)} ›</span></button>
@@ -2935,6 +2936,7 @@
     } else if (action === 'feature-toggle') {
       haptic();
       window.setFeature(id, !window.feature(id));
+      if (id === 'weight') statsWeight = false;
       renderSettings();
       renderAll();
       if (window.renderTodo) window.renderTodo();
