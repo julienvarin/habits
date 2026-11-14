@@ -16,6 +16,8 @@ alter table habits add column if not exists section text;
 alter table habits add column if not exists per_week int check (per_week between 1 and 6);
 -- Migration: an emoji per habit; null = guessed from the name in the app.
 alter table habits add column if not exists icon text;
+-- Migration: a short word under the emoji in the quick check; null = first word of the name.
+alter table habits add column if not exists short_label text;
 
 create table if not exists entries (
   id uuid primary key default gen_random_uuid(),

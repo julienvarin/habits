@@ -651,7 +651,9 @@
       if (t && !jb.doneFor(today)) out.push({ id: `big@${today}`, icon: '◎', go: 'bigtask',
         title: 'Your one big task is still open', body: t });
     }
-    if (js && hour >= 20 && !js.doneOn(today)) {
+    const journalOn = window.feature('journal');
+    if (!journalOn) { /* journal hidden in Settings */ }
+    else if (js && hour >= 20 && !js.doneOn(today)) {
       out.push({ id: `journal@${today}`, icon: '✍️', go: 'journal', title: "Write today's journal",
         body: "Something you did, something to remember, and tomorrow's big task." });
     } else if (jb && hour >= 20 && !jb.textFor(fmtDate(shiftDays(new Date(), 1)))) {
@@ -810,6 +812,11 @@
   // ============================================================
   // Quick check: the ✓ button's sheet, one square per habit to tick today
   // ============================================================
+  // The short word under the emoji: the habit's own, else its name's first word.
+  function habitWord(h) {
+    return (h.short_label || '').trim() || String(h.name || '').trim().split(/\s+/)[0] || '';
+  }
+
   function quickCheckHtml() {
     if (!state.habits.length) {
       return `<div class="sheet-empty">
@@ -825,6 +832,7 @@
         <button class="qc-sq${on ? ' on' : ''}" style="--c:${h.color}" data-action="quick-toggle" data-id="${h.id}"
                 aria-pressed="${on}" aria-label="${esc(h.name)}">
           <span class="qc-mark">${esc(habitIcon(h))}</span>
+          <span class="qc-word">${esc(habitWord(h))}</span>
           ${on ? '<span class="qc-check" aria-hidden="true">✓</span>' : ''}
         </button>`;
     }).join('');
@@ -985,7 +993,7 @@
     // Journaling counts as one more tracked item in the "all habits" aggregate,
     // active from its first entry onward (see journal.js / journalScore).
     const j = window.journalScore;
-    if (j && j.activeOn(dstr)) { active++; if (j.doneOn(dstr)) done++; }
+    if (j && window.feature('journal') && j.activeOn(dstr)) { active++; if (j.doneOn(dstr)) done++; }
     if (!active) return null;
     return done / active;
   }
@@ -1323,7 +1331,7 @@
         const r = rateOver(days, h);
         return { name: h.name, color: h.color, r: r === null ? 0 : Math.round(r), habitId: h.id };
       });
-      if (window.journalScore && window.journalScore.firstDate())
+      if (window.feature('journal') && window.journalScore && window.journalScore.firstDate())
         items.push({ name: 'Journal', color: JOURNAL_COLOR, r: activityRate(window.journalScore, days) });
       if (window.journalBig && window.journalBig.firstAssignedDate())
         items.push({ name: 'One big task', color: BIGTASK_COLOR, r: activityRate(window.journalBig, days) });
@@ -1681,7 +1689,15 @@
   // ============================================================
   // Render all
   // ============================================================
+  // Optional sections (Settings → Sections): the journal under Habits.
+  function applyFeatures() {
+    const on = window.feature('journal');
+    document.getElementById('journal-head').hidden = !on;
+    document.getElementById('view-journal').hidden = !on;
+  }
+
   function renderAll() {
+    applyFeatures();
     renderToday();
     renderHabits();
     renderQuickCheck();
@@ -1750,6 +1766,10 @@
                    value="${chosenIcon && !ICON_CHOICES.includes(chosenIcon) ? esc(chosenIcon) : ''}"
                    aria-label="Any other emoji" autocomplete="off" />
           </div>
+          <label class="field-label" for="m-word">Quick check word</label>
+          <input id="m-word" type="text" maxlength="14"
+                 placeholder="${esc(habit ? habitWord({ name: habit.name }) : 'e.g. Sport')}"
+                 value="${esc(habit?.short_label ?? '')}" autocomplete="off" />
           <label class="field-label">Color</label>
           <div class="color-grid" id="color-grid">
             ${COLORS.map(c => `
@@ -1766,6 +1786,7 @@
       </div>`;
 
     const input = root.querySelector('#m-name');
+    const wordInput = root.querySelector('#m-word');
     const sectionInput = root.querySelector('#m-section');
     setTimeout(() => input.focus(), 60);
 
@@ -1811,6 +1832,7 @@
     }
     input.addEventListener('input', () => {
       root.querySelector('#icon-auto').textContent = guessIcon(input.value);
+      wordInput.placeholder = habitWord({ name: input.value }) || 'e.g. Sport';
     }, sig);
     root.querySelector('#icon-grid').addEventListener('click', e => {
       const opt = e.target.closest('.icon-opt');
@@ -1851,6 +1873,9 @@
           const freq = (chosenPerWeek || (habit && habit.per_week)) ? { per_week: chosenPerWeek } : {};
           // Same for icon: only sent once one is picked (or cleared).
           if (chosenIcon || (habit && habit.icon)) freq.icon = chosenIcon;
+          // And the quick check word.
+          const word = wordInput.value.trim() || null;
+          if (word || (habit && habit.short_label)) freq.short_label = word;
           if (isNew) {
             const h = await db.addHabit(name, chosenColor, state.habits.length, section, freq);
             state.habits.push(h);
@@ -1862,7 +1887,7 @@
           closeModal();
           renderAll();
         } catch (err) {
-          toast(/per_week|icon/.test(err.message)
+          toast(/per_week|icon|short_label/.test(err.message)
             ? 'Run schema.sql in Supabase first (new habit columns)'
             : 'Couldn\'t save: ' + err.message, 4000);
         }
@@ -2012,6 +2037,15 @@
     root.innerHTML = `
       <div class="section-label">Daily reminder</div>
       ${reminder}
+      <div class="section-label">Sections</div>
+      <div class="set-list">
+        ${[['journal', 'Journal'], ['stress', 'Stress board']].map(([k, label]) => {
+          const on = window.feature(k);
+          return `<button class="set-row" data-action="feature-toggle" data-id="${k}" role="switch" aria-checked="${on}">
+            <span class="set-main">${label}</span><span class="switch${on ? ' on' : ''}"></span></button>`;
+        }).join('')}
+      </div>
+      <p class="set-hint">The journal sits at the bottom of Habits; the stress board is a tab in Todo.</p>
       <div class="section-label">Weight</div>
       <div class="set-list">
         <button class="set-row" data-action="set-goal"><span class="set-main">Goal weight</span><span>${window.weight?.goal() ? `${window.weight.goal().toFixed(1)} kg` : 'None'} ›</span></button>
@@ -2898,6 +2932,12 @@
 
     if (action === 'reminder-toggle' || action === 'reminder-test' || action === 'sign-out') {
       handleSettingsAction(action);
+    } else if (action === 'feature-toggle') {
+      haptic();
+      window.setFeature(id, !window.feature(id));
+      renderSettings();
+      renderAll();
+      if (window.renderTodo) window.renderTodo();
     } else if (action === 'refresh-morning') {
       morningState.lastFetched = null;
       initMorningView();

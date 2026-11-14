@@ -50,8 +50,8 @@
     <section id="view-habits" class="view">
       <header class="page-head"><h1>Habits</h1><button class="round-btn" data-action="add-habit" type="button" aria-label="Add habit"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" aria-hidden="true"><path d="M12 5v14M5 12h14"/></svg></button></header>
       <div id="habits-body"></div>
-      <div class="sec-head" id="journal-head"><h2>Journal</h2></div>
-      <div id="view-journal"></div>
+      <div class="sec-head" id="journal-head" hidden><h2>Journal</h2></div>
+      <div id="view-journal" hidden></div>
     </section>
 
     <section id="view-stats" class="view">
@@ -104,6 +104,10 @@
           document.body.appendChild(s);
         });
       }
+
+      // Optional sections, toggled in Settings (off by default, per device).
+      window.feature = function(k) { try { return localStorage.getItem('habits.feature.' + k) === '1'; } catch (e) { return false; } };
+      window.setFeature = function(k, on) { try { localStorage.setItem('habits.feature.' + k, on ? '1' : '0'); } catch (e) {} };
 
       load(['config.js', 'supabase.js'], function() {
         window.auth.consumeRedirect();
