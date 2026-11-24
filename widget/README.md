@@ -8,17 +8,26 @@ version of their colour once the week's target is met.
 ## Setup (about 2 minutes)
 
 1. Install **Scriptable** (free) from the App Store.
-2. In Scriptable, tap **+**, paste in all of `habits-widget.js`, and name the
-   script **Habits** (tap the title at the top).
-3. Tap ▶︎ to run it once. Enter your email, then the 6-digit code you're sent
-   (this is the same sign-in as the web app). After that a list of today's
-   habits appears, and you can tick them from there too.
-   If the sign-in boxes keep coming back empty, type your email and password
-   into the `EMAIL` and `PASSWORD` lines at the top of the script instead and
-   run it again. Once you're signed in you can clear the password.
+2. In Scriptable, tap **+**, paste in all of `loader.js` (not
+   `habits-widget.js`), and name the script **Habits** (tap the title).
+3. Fill in `EMAIL` and `PASSWORD` at the top, then tap ▶︎ to run it. A list of
+   today's habits appears; you can tick them from there too. Once you're
+   signed in you can clear the password.
 4. On the home screen: long-press → **Edit** → **Add Widget** → Scriptable →
    **Large** → Add. Long-press the new widget → **Edit Widget** → Script:
    **Habits**. Leave "When Interacting" on **Run Script**.
+
+## Updating the widget
+
+The loader downloads `widget/habits-widget.js` from the website
+(`SITE_URL` + `widget/habits-widget.js`) every time it runs, so to change the
+widget, edit that file on your computer and push it to `main`. Once GitHub
+Pages has deployed (a minute or two), the next widget refresh or tap uses the
+new code. Nothing needs pasting on the phone again. Offline, the loader runs
+the last copy it downloaded.
+
+You can also paste `habits-widget.js` itself into Scriptable; its settings
+then go at its own top, and it won't update by itself.
 
 It reads the Supabase URL and public key from the deployed site's `config.js`
 (`SITE_URL` at the top of the script). If the site moves, change `SITE_URL`,

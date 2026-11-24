@@ -6,16 +6,19 @@
 // sign in (emailed code or password, as in the web app).
 
 // ---- Settings -------------------------------------------------------------
+// When this runs through loader.js, the loader's settings win (HABITS_SETTINGS),
+// so this file can be updated on GitHub without retyping them.
+const LOADED = (typeof HABITS_SETTINGS === "object" && HABITS_SETTINGS) || {};
 // The site's config.js gives the Supabase URL and public key. Leave both keys
 // below empty to read them from there, or fill them in to skip the site.
-const SITE_URL = "https://julienvarin.github.io/habits/";
+const SITE_URL = LOADED.SITE_URL || "https://julienvarin.github.io/habits/";
 let SUPABASE_URL = "";
 let SUPABASE_ANON_KEY = "";
 // Your account. If typing in the sign-in boxes doesn't work, put your email
 // here (and your password, to skip the emailed code), then run the script.
 // Once you're signed in you can clear the password: the widget stays signed in.
-const EMAIL = "";
-const PASSWORD = "";
+const EMAIL = LOADED.EMAIL || "";
+const PASSWORD = LOADED.PASSWORD || "";
 // ---------------------------------------------------------------------------
 
 const KC_SESSION = "habits.widget.session";
