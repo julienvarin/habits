@@ -13,6 +13,9 @@ version of their colour once the week's target is met.
 3. Tap ▶︎ to run it once. Enter your email, then the 6-digit code you're sent
    (this is the same sign-in as the web app). After that a list of today's
    habits appears, and you can tick them from there too.
+   If the sign-in boxes keep coming back empty, type your email and password
+   into the `EMAIL` and `PASSWORD` lines at the top of the script instead and
+   run it again. Once you're signed in you can clear the password.
 4. On the home screen: long-press → **Edit** → **Add Widget** → Scriptable →
    **Large** → Add. Long-press the new widget → **Edit Widget** → Script:
    **Habits**. Leave "When Interacting" on **Run Script**.

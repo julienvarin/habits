@@ -3,7 +3,7 @@
 //
 // Works as a large widget (up to 16 habits), a medium one (up to 8) or a small
 // one (progress only; tap it for a list). Run it in the Scriptable app once to
-// sign in with the same emailed code as the web app.
+// sign in (emailed code or password, as in the web app).
 
 // ---- Settings -------------------------------------------------------------
 // The site's config.js gives the Supabase URL and public key. Leave both keys
@@ -11,6 +11,11 @@
 const SITE_URL = "https://julienvarin.github.io/habits/";
 let SUPABASE_URL = "";
 let SUPABASE_ANON_KEY = "";
+// Your account. If typing in the sign-in boxes doesn't work, put your email
+// here (and your password, to skip the emailed code), then run the script.
+// Once you're signed in you can clear the password: the widget stays signed in.
+const EMAIL = "";
+const PASSWORD = "";
 // ---------------------------------------------------------------------------
 
 const KC_SESSION = "habits.widget.session";
@@ -112,6 +117,7 @@ async function accessToken() {
 // Asks for one line of text; re-asks while it's empty. Returns the text, or
 // { choice: i } for one of `extra` buttons, or null when cancelled.
 async function ask(title, message, placeholder, value, keyboard, extra) {
+  let empty = 0;
   for (;;) {
     const a = new Alert();
     a.title = title;
@@ -127,13 +133,25 @@ async function ask(title, message, placeholder, value, keyboard, extra) {
     if (i > 0) return { choice: i - 1 };
     const v = (a.textFieldValue(0) || "").trim();
     if (v) return v;
+    if (++empty >= 2) {
+      const n = new Alert();
+      n.title = "Nothing came through";
+      n.message = "Scriptable didn't pass on what you typed. Put your email and password in the EMAIL and PASSWORD lines at the top of the script, then run it again.";
+      n.addAction("OK");
+      await n.presentAlert();
+      return null;
+    }
   }
 }
 
 // Same two ways in as the web app: an emailed code, or the account password.
 async function signIn() {
+  if (EMAIL.trim() && PASSWORD) {
+    saveSession(await authReq("/token?grant_type=password", { email: EMAIL.trim(), password: PASSWORD }));
+    return true;
+  }
   const last = Keychain.contains(KC_EMAIL) ? Keychain.get(KC_EMAIL) : "";
-  const email = await ask("Sign in to Habits", "Your account email.", "you@example.com", last, "email");
+  const email = EMAIL.trim() || await ask("Sign in to Habits", "Your account email.", "you@example.com", last, "email");
   if (!email) return false;
   Keychain.set(KC_EMAIL, email);
 
