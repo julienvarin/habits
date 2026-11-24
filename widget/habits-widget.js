@@ -15,6 +15,7 @@ let SUPABASE_ANON_KEY = "";
 
 const KC_SESSION = "habits.widget.session";
 const KC_CONFIG = "habits.widget.config";
+const KC_EMAIL = "habits.widget.email";
 const fm = FileManager.local();
 const CACHE = fm.joinPath(fm.documentsDirectory(), "habits-widget-cache.json");
 
@@ -108,25 +109,34 @@ async function accessToken() {
   return session && session.access_token;
 }
 
+// Asks for one line of text; re-asks while it's empty. null = cancelled.
+async function ask(title, message, placeholder, value, keyboard) {
+  for (;;) {
+    const a = new Alert();
+    a.title = title;
+    a.message = message;
+    const f = a.addTextField(placeholder, value || "");
+    if (keyboard === "email") f.setEmailAddressKeyboard();
+    if (keyboard === "number") f.setNumberPadKeyboard();
+    a.addAction("OK");
+    a.addCancelAction("Cancel");
+    if (await a.presentAlert() === -1) return null;
+    const v = (a.textFieldValue(0) || "").trim();
+    if (v) return v;
+  }
+}
+
 async function signIn() {
-  const a = new Alert();
-  a.title = "Sign in to Habits";
-  a.message = "Your account email. A 6-digit code will be sent to it.";
-  a.addTextField("you@example.com");
-  a.addAction("Send code");
-  a.addCancelAction("Cancel");
-  if (await a.presentAlert() === -1) return false;
-  const email = a.textFieldValue(0).trim();
+  const last = Keychain.contains(KC_EMAIL) ? Keychain.get(KC_EMAIL) : "";
+  const email = await ask("Sign in to Habits", "Your account email. A 6-digit code will be sent to it.",
+    "you@example.com", last, "email");
+  if (!email) return false;
+  Keychain.set(KC_EMAIL, email);
   await authReq("/otp", { email, create_user: false });
 
-  const c = new Alert();
-  c.title = "Enter the code";
-  c.message = "Sent to " + email;
-  c.addTextField("123456");
-  c.addAction("Sign in");
-  c.addCancelAction("Cancel");
-  if (await c.presentAlert() === -1) return false;
-  saveSession(await authReq("/verify", { type: "email", email, token: c.textFieldValue(0).trim() }));
+  const code = await ask("Enter the code", "Sent to " + email, "123456", "", "number");
+  if (!code) return false;
+  saveSession(await authReq("/verify", { type: "email", email, token: code.replace(/\s/g, "") }));
   return true;
 }
 
