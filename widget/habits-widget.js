@@ -255,8 +255,10 @@ function model(data) {
 }
 
 // ---- Drawing ----
-const BG = Color.dynamic(new Color("#ffffff"), new Color("#1c1c1e"));
-const CELL = Color.dynamic(new Color("#f2f2f7"), new Color("#2c2c2e"));
+// The web app's colours (styles.css: --surface, light and dark).
+const SURFACE_LIGHT = "#ffffff";
+const SURFACE_DARK = "#16161d";
+const BG = Color.dynamic(new Color(SURFACE_LIGHT), new Color(SURFACE_DARK));
 const TEXT = Color.dynamic(new Color("#1c1c1e"), new Color("#ffffff"));
 const MUTED = Color.dynamic(new Color("#8e8e93"), new Color("#98989d"));
 const GREEN = new Color("#34c759");
@@ -286,35 +288,62 @@ function header(w, m, compact) {
   s.textColor = all ? GREEN : MUTED;
 }
 
+// Mix two #rrggbb colours: t = share of `a` (like CSS color-mix).
+function mix(a, b, t) {
+  const p = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [x, y] = [p(a), p(b)];
+  return "#" + x.map((v, i) => Math.round(v * t + y[i] * (1 - t)).toString(16).padStart(2, "0")).join("");
+}
+const tint = (hex, t) => Color.dynamic(new Color(mix(hex, SURFACE_LIGHT, t)), new Color(mix(hex, SURFACE_DARK, t)));
+
+// One square, styled like the quick check (.qc-sq in styles.css): a faint
+// tint and a coloured border to do, the habit's colour with a ✓ badge when done.
 function cell(row, h, cw, ch) {
+  const hex = /^#[0-9a-f]{6}$/i.test(h.color || "") ? h.color : "#34c759";
+  const color = new Color(hex);
   const c = row.addStack();
   c.layoutVertically();
   c.size = new Size(cw, ch);
-  c.cornerRadius = 16;
-  const color = new Color(h.color || "#34c759");
-  c.backgroundColor = h.on ? color : h.weekMet ? new Color(h.color || "#34c759", 0.3) : CELL;
+  c.cornerRadius = Math.round(Math.min(cw, ch) * 0.26);
   c.url = runUrl("tick=" + encodeURIComponent(h.id) + "&size=" + family);
-  c.setPadding(5, 6, 5, 6);
+  if (h.on) {
+    c.backgroundColor = color;
+  } else {
+    c.backgroundColor = tint(hex, h.weekMet ? 0.35 : 0.12);
+    c.borderColor = tint(hex, 0.45);
+    c.borderWidth = 2;
+  }
+  c.setPadding(4, 4, 4, 4);
 
+  // Top row: the ✓ badge, or the same height left empty so the emoji stays centred.
+  const badgeSize = Math.max(14, Math.round(Math.min(cw, ch) * 0.24));
   const top = c.addStack();
+  top.size = new Size(cw - 8, badgeSize);
   top.addSpacer();
-  const mark = top.addText(h.on ? "✓" : " ");
-  mark.font = Font.boldSystemFont(11);
-  mark.textColor = Color.white();
+  if (h.on) {
+    const b = top.addStack();
+    b.size = new Size(badgeSize, badgeSize);
+    b.cornerRadius = badgeSize / 2;
+    b.backgroundColor = Color.white();
+    b.centerAlignContent();
+    const t = b.addText("✓");
+    t.font = Font.heavySystemFont(Math.round(badgeSize * 0.62));
+    t.textColor = color;
+  }
 
   c.addSpacer();
   const iconRow = c.addStack();
   iconRow.addSpacer();
   const ico = iconRow.addText(habitIcon(h));
-  ico.font = Font.systemFont(Math.min(30, Math.round(ch * 0.32)));
+  ico.font = Font.systemFont(Math.round(Math.min(cw, ch) * 0.36));
   iconRow.addSpacer();
 
-  c.addSpacer(3);
+  c.addSpacer(2);
   const wordRow = c.addStack();
   wordRow.addSpacer();
   const word = wordRow.addText(habitWord(h) + (isWeekly(h) ? ` ${Math.min(h.weekCount, h.per_week)}/${h.per_week}` : ""));
-  word.font = Font.semiboldSystemFont(11);
-  word.textColor = h.on ? Color.white() : MUTED;
+  word.font = Font.boldSystemFont(Math.max(10, Math.round(Math.min(cw, ch) * 0.15)));
+  word.textColor = h.on ? new Color("#ffffff", 0.9) : MUTED;
   word.lineLimit = 1;
   word.minimumScaleFactor = 0.6;
   wordRow.addSpacer();
@@ -324,16 +353,16 @@ function cell(row, h, cw, ch) {
 function grid(w, m, fam) {
   const [W, H] = widgetSize(fam);
   const pad = fam === "medium" ? 12 : 14;
-  const gap = 8;
+  const gap = 10;
   const maxCells = fam === "medium" ? 8 : 16;
   const habits = m.habits.slice(0, maxCells);
   const n = habits.length;
   const cols = fam === "medium" ? Math.min(4, Math.max(1, Math.ceil(n / 2)))
-    : n <= 4 ? 2 : n <= 9 ? 3 : 4;
+    : n <= 4 ? 2 : n <= 6 ? 3 : 4;
   const rows = Math.ceil(n / cols);
   const headerH = fam === "medium" ? 22 : 30;
   const cw = Math.floor((W - 2 * pad - (cols - 1) * gap) / cols);
-  const ch = Math.min(Math.floor((H - 2 * pad - headerH - (rows - 1) * gap) / rows), cw + 20);
+  const ch = Math.min(Math.floor((H - 2 * pad - headerH - (rows - 1) * gap) / rows), Math.round(cw * 1.4));
 
   w.addSpacer(fam === "medium" ? 6 : 10);
   for (let r = 0; r < rows; r++) {
