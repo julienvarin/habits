@@ -109,34 +109,60 @@ async function accessToken() {
   return session && session.access_token;
 }
 
-// Asks for one line of text; re-asks while it's empty. null = cancelled.
-async function ask(title, message, placeholder, value, keyboard) {
+// Asks for one line of text; re-asks while it's empty. Returns the text, or
+// { choice: i } for one of `extra` buttons, or null when cancelled.
+async function ask(title, message, placeholder, value, keyboard, extra) {
   for (;;) {
     const a = new Alert();
     a.title = title;
     a.message = message;
-    const f = a.addTextField(placeholder, value || "");
+    const f = keyboard === "password" ? a.addSecureTextField(placeholder, value || "") : a.addTextField(placeholder, value || "");
     if (keyboard === "email") f.setEmailAddressKeyboard();
     if (keyboard === "number") f.setNumberPadKeyboard();
     a.addAction("OK");
+    (extra || []).forEach(x => a.addAction(x));
     a.addCancelAction("Cancel");
-    if (await a.presentAlert() === -1) return null;
+    const i = await a.presentAlert();
+    if (i === -1) return null;
+    if (i > 0) return { choice: i - 1 };
     const v = (a.textFieldValue(0) || "").trim();
     if (v) return v;
   }
 }
 
+// Same two ways in as the web app: an emailed code, or the account password.
 async function signIn() {
   const last = Keychain.contains(KC_EMAIL) ? Keychain.get(KC_EMAIL) : "";
-  const email = await ask("Sign in to Habits", "Your account email. A 6-digit code will be sent to it.",
-    "you@example.com", last, "email");
+  const email = await ask("Sign in to Habits", "Your account email.", "you@example.com", last, "email");
   if (!email) return false;
   Keychain.set(KC_EMAIL, email);
-  await authReq("/otp", { email, create_user: false });
 
-  const code = await ask("Enter the code", "Sent to " + email, "123456", "", "number");
-  if (!code) return false;
-  saveSession(await authReq("/verify", { type: "email", email, token: code.replace(/\s/g, "") }));
+  let usePassword = false;
+  const how = new Alert();
+  how.title = "Sign in to Habits";
+  how.message = email;
+  how.addAction("Email me a code");
+  how.addAction("Use password");
+  how.addCancelAction("Cancel");
+  const h = await how.presentAlert();
+  if (h === -1) return false;
+  usePassword = h === 1;
+
+  if (!usePassword) {
+    await authReq("/otp", { email, create_user: false });
+    const code = await ask("Enter the code",
+      "Sent to " + email + ". It can take a minute; check spam too.",
+      "123456", "", "number", ["Use password instead"]);
+    if (!code) return false;
+    if (typeof code === "string") {
+      saveSession(await authReq("/verify", { type: "email", email, token: code.replace(/\s/g, "") }));
+      return true;
+    }
+  }
+
+  const pw = await ask("Password", email, "Password", "", "password");
+  if (!pw || typeof pw !== "string") return false;
+  saveSession(await authReq("/token?grant_type=password", { email, password: pw }));
   return true;
 }
 
