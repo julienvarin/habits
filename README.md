@@ -76,6 +76,11 @@ The schedule is in UTC and covers 23:00 Berlin in both summer and winter time;
 the function only sends at 23:00 local time, at most once a day. Then turn the
 reminder on from Stats → Daily reminder (on iPhone, from the home-screen app).
 
+## Home-screen widget (iOS)
+
+A large widget with one tappable square per habit, built with the free
+Scriptable app. Setup is in [`widget/README.md`](widget/README.md).
+
 ## Local dev
 
 Just open `index.html` in a browser, or:
