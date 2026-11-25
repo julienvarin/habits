@@ -193,59 +193,8 @@ body::before {
 .section-label { color: var(--muted); font-size: 14px; font-weight: 600; margin: 26px 4px 10px; }
 .section-label:first-child { margin-top: 4px; }
 
-/* ============================================================
-   HERO (today's habits)
-============================================================ */
-.hero {
-  position: relative; overflow: hidden; color: #fff; border-radius: 28px; padding: 18px;
-  background:
-    radial-gradient(110% 80% at 100% 100%, rgba(167, 155, 255, .55), transparent 60%),
-    linear-gradient(150deg, var(--hero-1), var(--hero-2));
-  box-shadow: 0 22px 44px -22px rgba(74, 47, 196, .75);
-}
-.hero-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
-.hero-pill { display: inline-flex; align-items: center; gap: 4px; font-weight: 600; font-size: 15px; line-height: 1; padding: 10px 14px; border-radius: 999px; background: rgba(255, 255, 255, .15); }
-.hero-status { font-size: 13px; font-weight: 700; padding: 7px 12px; border-radius: 999px; background: rgba(110, 231, 183, .2); color: #bbf7d0; white-space: nowrap; }
-.hero-status.warn { background: rgba(253, 224, 71, .2); color: #fef08a; }
-.hero-status.calm { background: rgba(255, 255, 255, .15); color: #fff; }
-.hero-mid { display: flex; align-items: center; gap: 18px; margin: 20px 0 18px; }
-.hero-text { flex: 1; min-width: 0; }
-.hero-label { font-size: 15px; opacity: .85; }
-.hero-big { font-size: clamp(32px, 10.5vw, 44px); font-weight: 800; letter-spacing: -.035em; line-height: 1.08; margin: 4px 0 6px; white-space: nowrap; }
-.hero-big small { font-size: .55em; opacity: .7; letter-spacing: -.01em; }
-.hero-of { font-size: 14px; opacity: .8; }
-.hero-of.faint { opacity: .6; font-size: 13px; margin-top: 2px; }
-.ring { position: relative; width: 112px; height: 112px; flex: 0 0 auto; }
-.ring svg { width: 100%; height: 100%; transform: rotate(-90deg); display: block; }
-.ring circle { fill: none; stroke-width: 13; }
-.ring-track { stroke: rgba(255, 255, 255, .16); }
-.ring-fill { stroke: #5eead4; stroke-linecap: round; transition: stroke-dasharray .5s ease; }
-.ring-label { position: absolute; inset: 0; display: grid; place-content: center; text-align: center; }
-.ring-pct { font-size: 26px; font-weight: 800; letter-spacing: -.02em; }
-.ring-sub { font-size: 13px; opacity: .8; margin-top: 2px; }
-button.ring { color: inherit; padding: 0; }
-button.ring:active { transform: scale(.96); }
-.hero-tiles { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
-.hero-tile { text-align: left; color: #fff; background: rgba(255, 255, 255, .13); border-radius: 18px; padding: 13px 14px; min-width: 0; }
-button.hero-tile:active { transform: scale(.98); }
-.ht-label { font-size: 13px; opacity: .82; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ht-val { font-size: 22px; font-weight: 800; letter-spacing: -.02em; margin-top: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.ht-val small { font-size: 14px; font-weight: 700; opacity: .75; }
-.ht-val.good { color: #6ee7b7; }
-.ht-val.bad { color: #fda4af; }
-.hero-cta {
-  width: 100%; margin-top: 12px; border-radius: 16px; padding: 13px;
-  background: #fff; color: var(--hero-1); font-weight: 700; font-size: 15px; line-height: 1.2;
-}
-
-/* ---- tip: the most urgent notification ---- */
-#home-tip { margin-top: 18px; }
-#home-tip:empty { display: none; }
-.tip {
-  display: flex; align-items: flex-start; gap: 4px;
-  background: var(--tip-bg); border: 1px solid var(--tip-line); border-radius: 22px; padding: 6px 6px 6px 0;
-}
-.tip-btn, .alert-row {
+/* ---- notification rows (bell sheet) ---- */
+.alert-row {
   flex: 1; min-width: 0; display: flex; align-items: flex-start; gap: 14px;
   text-align: left; padding: 10px 0 10px 16px; color: var(--text);
 }
@@ -253,8 +202,40 @@ button.hero-tile:active { transform: scale(.98); }
 .tip-main { flex: 1; min-width: 0; }
 .tip-title { font-size: 17px; font-weight: 700; letter-spacing: -.01em; }
 .tip-body { color: var(--tip-text); font-size: 15px; line-height: 1.4; margin-top: 4px; }
-.tip-x { flex: 0 0 auto; width: 36px; height: 36px; color: var(--muted); font-size: 16px; border-radius: 10px; }
-.tip-more { display: block; margin: 10px auto 0; font-size: 14px; }
+
+/* ---- cover: full-screen quick check, swiped down to reveal the app ---- */
+.cover {
+  position: fixed; inset: 0; z-index: 50; display: flex; flex-direction: column;
+  background: var(--bg); will-change: transform;
+  border-radius: 0 0 0 0; box-shadow: 0 -20px 60px rgba(0, 0, 0, .25);
+}
+.cover.anim { transition: transform .42s cubic-bezier(.32, .72, 0, 1), border-radius .42s ease; }
+.cover.dragging { border-radius: 32px 32px 0 0; overflow: hidden; }
+html.cover-open, html.cover-open body { overflow: hidden; }
+.cover-scroll {
+  flex: 1; overflow-y: auto; overscroll-behavior: contain; -webkit-overflow-scrolling: touch;
+  padding: calc(var(--safe-t) + 22px) 16px 12px; max-width: 720px; width: 100%; margin: 0 auto;
+}
+.cover-head { padding: 0 4px 18px; }
+.cover-sub { color: var(--muted); font-size: 15px; font-weight: 600; margin-top: 6px; min-height: 1em; }
+.cover-grid .qc-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin: 0; }
+.cover-grid .qc-grid.many { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
+.cover-grid .qc-sq { aspect-ratio: 6 / 5; border-radius: 28px; gap: 6px; padding: 10px; }
+.cover-grid .many .qc-sq { aspect-ratio: 1; border-radius: 24px; }
+.cover-grid .many .qc-mark { font-size: 42px; }
+.cover-grid .many .qc-word { font-size: 13px; }
+.cover-grid .qc-mark { font-size: 56px; }
+.cover-grid .qc-img { width: 72%; max-width: 120px; aspect-ratio: 1; object-fit: contain; filter: drop-shadow(0 10px 14px rgba(0, 0, 0, .18)); }
+.cover-grid .qc-word { font-size: 15px; }
+.cover-grid .qc-check { top: 10px; right: 10px; width: 26px; height: 26px; font-size: 15px; }
+.cover-grid .sheet-empty { padding-top: 40px; }
+.qc-loading { height: 50vh; border-radius: 28px; background: var(--surface-2); animation: pulse 1.2s ease-in-out infinite alternate; }
+@keyframes pulse { from { opacity: .5; } to { opacity: 1; } }
+.cover-handle {
+  flex: 0 0 auto; display: flex; flex-direction: column; align-items: center; gap: 6px;
+  padding: 10px 0 calc(14px + var(--safe-b)); color: var(--muted); font-size: 12px; font-weight: 600;
+}
+.cover-grip { width: 44px; height: 5px; border-radius: 3px; background: var(--line-hi); }
 
 /* ---- bottom sheet ---- */
 .sheet { position: fixed; inset: 0; z-index: 60; background: rgba(10, 10, 14, .38); display: flex; align-items: flex-end; justify-content: center; animation: fade-in .15s ease; }

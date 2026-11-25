@@ -78,7 +78,22 @@
       <button class="tab" data-view="stats" role="tab" aria-selected="false" type="button"><svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M3 3v18h18"/><path d="M7 15l4-5 3 3 5-7"/></svg>Stats</button>
     </nav>
 
-    <!-- Bottom sheet (notifications, quick check, edit todo) -->
+    <!-- Cover: the quick check, full screen on launch; swipe down for the rest of the app -->
+    <div id="cover" class="cover" role="dialog" aria-label="Today's habits">
+      <div id="cover-scroll" class="cover-scroll">
+        <header class="cover-head">
+          <div id="cover-date" class="home-date"></div>
+          <h1 id="cover-hello" class="home-hello"></h1>
+          <div id="cover-sub" class="cover-sub"></div>
+        </header>
+        <div id="cover-grid" class="cover-grid"></div>
+      </div>
+      <button id="cover-handle" class="cover-handle" type="button" aria-label="Show the rest of the app">
+        <span class="cover-grip"></span><span>Swipe down</span>
+      </button>
+    </div>
+
+    <!-- Bottom sheet (notifications, edit todo) -->
     <div id="sheet" class="sheet" hidden>
       <div class="sheet-card" role="dialog" aria-modal="true" aria-labelledby="sheet-title">
         <div class="sheet-grip"></div>
