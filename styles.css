@@ -221,7 +221,8 @@ html.cover-open, html.cover-open body { overflow: hidden; }
 .cover-grid .qc-grid { grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 12px; margin: 0; }
 .cover-grid .qc-grid.many { grid-template-columns: repeat(auto-fill, minmax(104px, 1fr)); }
 .cover-grid .qc-sq { aspect-ratio: 6 / 5; border-radius: 28px; gap: 6px; padding: 10px; }
-.cover-grid .many .qc-sq { aspect-ratio: 1; border-radius: 24px; }
+.cover-grid .many .qc-sq { aspect-ratio: 4 / 5; border-radius: 24px; }
+.cover-grid .many .qc-img { width: 82%; }
 .cover-grid .many .qc-mark { font-size: 42px; }
 .cover-grid .many .qc-word { font-size: 13px; }
 .cover-grid .qc-mark { font-size: 56px; }

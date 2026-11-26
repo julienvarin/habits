@@ -289,26 +289,46 @@
     '🍬','☕','🍷','😴','🛏️','🦷','🧴','💊','✍️','📓','🧠','🎸',
     '🎨','💻','🗣️','📵','🧹','🪴','🐕','💰','🙏','☀️','🌙','⭐',
   ];
+  // [name pattern, emoji, 3D image in img/habits/] — the first match wins,
+  // so specific habits come before the generic words they contain.
   const ICON_GUESSES = [
-    [/read|book|lire|lecture/, '📚'], [/run|jog|cours/, '🏃'], [/meditat|breath|respir/, '🧘'],
-    [/stretch|yoga|étire|etire|mobility/, '🤸'], [/gym|workout|lift|push|pull|sport|muscu|abs|plank/, '💪'],
-    [/walk|steps|marche|pas/, '🚶'], [/bike|cycl|vélo|velo/, '🚴'], [/swim|nage|piscine/, '🏊'],
-    [/water|drink|eau|hydrat/, '💧'], [/sugar|sucre|sweet|candy/, '🍬'], [/smok|cigar|clope/, '🚭'],
-    [/alcohol|beer|wine|alcool|bière|vin/, '🍷'], [/coffee|café|cafe|caffeine/, '☕'],
-    [/veg|fruit|salad|eat|food|meal|cook|légume|manger|cuisine/, '🥗'],
-    [/sleep|bed|dormir|coucher|nap/, '😴'], [/floss|teeth|tooth|dent/, '🦷'], [/skin|cream|crème|sunscreen/, '🧴'],
-    [/vitamin|pill|supplement|medic|médic/, '💊'], [/journal|diary|journal/, '📓'], [/write|writ|écri|blog/, '✍️'],
-    [/learn|study|course|duolingo|langu|anglais|english|german|allemand|apprend/, '🧠'],
-    [/guitar|piano|music|musique|instrument|practice/, '🎸'], [/draw|paint|dessin|art|sketch/, '🎨'],
-    [/code|coding|program|dev/, '💻'], [/phone|screen|social|instagram|tiktok|écran/, '📵'],
-    [/clean|tidy|ménage|menage|range/, '🧹'], [/plant|garden|jardin/, '🪴'], [/dog|chien/, '🐕'],
-    [/money|budget|save|saving|spend|argent|épargne/, '💰'], [/pray|gratitude|grateful|gratitude|merci/, '🙏'],
-    [/morning|wake|réveil|matin|sun/, '☀️'], [/evening|night|soir/, '🌙'], [/call|family|friend|famille|ami/, '🗣️'],
+    [/morning health|shower|douche/, '☀️', 'morning-health'], [/(evening|night|soir).*(teeth|tooth|brush|dent)|(teeth|tooth|brush|dent).*(evening|night|soir)/, '🦷', 'teeth-night'],
+    [/shoulder|physio|rehab|kiné|kine|épaule|epaule/, '🤸', 'physio'], [/(run|jog|cours).*(gym|workout|sport)|(gym|workout|sport).*(run|jog)/, '🏃', 'run-gym'],
+    [/inspect/, '💻', 'inspect'], [/\bdig\b|vinyl|record|crate|discogs|disque/, '🎸', 'vinyl'],
+    [/\bbed\b|coucher/, '😴', 'sleep'],
+    [/read|book|lire|lecture/, '📚', 'read'], [/run|jog|cours/, '🏃', 'run'], [/meditat|breath|respir/, '🧘', 'meditate'],
+    [/stretch|yoga|étire|etire|mobility/, '🤸', 'stretch'], [/gym|workout|lift|push|pull|sport|muscu|abs|plank|exercis/, '💪', 'gym'],
+    [/walk|steps|marche|pas/, '🚶', 'walk'], [/bike|cycl|vélo|velo/, '🚴', 'bike'], [/swim|nage|piscine/, '🏊', 'swim'],
+    [/water|drink|eau|hydrat/, '💧', 'water'], [/sugar|sucre|sweet|candy/, '🍬', 'sugar'], [/smok|cigar|clope/, '🚭', 'smoke'],
+    [/alcohol|beer|wine|alcool|bière|vin/, '🍷', 'alcohol'], [/coffee|café|cafe|caffeine/, '☕', 'coffee'],
+    [/veg|fruit|salad|eat|food|meal|cook|légume|manger|cuisine/, '🥗', 'food'],
+    [/sleep|bed|dormir|coucher|nap/, '😴', 'sleep'], [/floss|teeth|tooth|dent/, '🦷', 'teeth'], [/skin|cream|crème|sunscreen/, '🧴', 'skin'],
+    [/vitamin|pill|supplement|medic|médic/, '💊', 'vitamin'], [/journal|diary|journal/, '📓', 'journal'], [/write|writ|écri|blog/, '✍️', 'write'],
+    [/learn|study|course|duolingo|langu|anglais|english|german|allemand|apprend/, '🧠', 'learn'],
+    [/guitar|piano|music|musique|instrument|practice/, '🎸', 'music'], [/draw|paint|dessin|art|sketch/, '🎨', 'art'],
+    [/code|coding|program|dev/, '💻', 'code'], [/phone|screen|social|instagram|tiktok|écran/, '📵', 'phone'],
+    [/clean|tidy|ménage|menage|range/, '🧹', 'clean'], [/plant|garden|jardin/, '🪴', 'plant'], [/dog|chien/, '🐕', 'dog'],
+    [/money|budget|save|saving|spend|argent|épargne/, '💰', 'money'], [/pray|gratitude|grateful|gratitude|merci/, '🙏', 'gratitude'],
+    [/morning|wake|réveil|matin|sun/, '☀️', 'morning'], [/evening|night|soir/, '🌙', 'evening'], [/call|family|friend|famille|ami/, '🗣️', 'call'],
   ];
+  // The 3D image for an emoji picked by hand in the habit editor.
+  const EMOJI_IMAGES = {
+    '📚':'read','🏃':'run','🧘':'meditate','💪':'gym','🚶':'walk','🚴':'bike','🏊':'swim','🤸':'stretch','💧':'water','🥗':'food','🍎':'apple',
+    '🚭':'smoke','🍬':'sugar','☕':'coffee','🍷':'alcohol','😴':'sleep','🛏️':'sleep','🦷':'teeth','🧴':'skin','💊':'vitamin','✍️':'write',
+    '📓':'journal','🧠':'learn','🎸':'music','🎨':'art','💻':'code','🗣️':'call','📵':'phone','🧹':'clean','🪴':'plant','🐕':'dog',
+    '💰':'money','🙏':'gratitude','☀️':'morning','🌙':'evening','⭐':'star',
+  };
   function guessIcon(name) {
     const n = String(name || '').toLowerCase();
     for (const [re, icon] of ICON_GUESSES) if (re.test(n)) return icon;
     return '⭐';
+  }
+  // The habit's 3D image: by name first, else by its emoji (null: keep the emoji).
+  function habitImage(h) {
+    const n = String(h.name || '').toLowerCase();
+    for (const [re, , img] of ICON_GUESSES) if (re.test(n)) return `img/habits/${img}.webp`;
+    const img = EMOJI_IMAGES[habitIcon(h)];
+    return img ? `img/habits/${img}.webp` : null;
   }
   function habitIcon(h) { return h.icon || guessIcon(h.name); }
 
@@ -718,8 +738,19 @@
   // Quick check: the ✓ button's sheet, one square per habit to tick today
   // ============================================================
   // The short word under the emoji: the habit's own, else its name's first word.
+  // Filler words are skipped ("In bed before 1am" → "Bed"); "Not"/"No" keep
+  // the word after them ("Not smoking"), so the meaning survives.
+  const FILLER = new Set(['in', 'on', 'at', 'to', 'the', 'a', 'an', 'my', 'some', 'do', 'go', 'work', 'get']);
   function habitWord(h) {
-    return (h.short_label || '').trim() || String(h.name || '').trim().split(/\s+/)[0] || '';
+    const own = (h.short_label || '').trim();
+    if (own) return own;
+    const words = String(h.name || '').trim().split(/\s+/).filter(Boolean);
+    let i = 0;
+    while (i < words.length - 1 && FILLER.has(words[i].toLowerCase())) i++;
+    const w = words[i] || '';
+    const cap = x => x.charAt(0).toUpperCase() + x.slice(1);
+    if (/^(not|no)$/i.test(w) && words[i + 1]) return `${cap(w)} ${words[i + 1].toLowerCase()}`;
+    return cap(w);
   }
 
   function quickCheckHtml() {
@@ -733,11 +764,11 @@
     }
     const today  = todayStr();
     const squares = state.habits.map(h => {
-      const on = hasTick(h.id, today);
+      const on = hasTick(h.id, today), img = habitImage(h);
       return `
         <button class="qc-sq${on ? ' on' : ''}" style="--c:${h.color}" data-action="quick-toggle" data-id="${h.id}"
                 aria-pressed="${on}" aria-label="${esc(h.name)}">
-          <span class="qc-mark">${esc(habitIcon(h))}</span>
+          ${img ? `<img class="qc-img" src="${img}" alt="" draggable="false" />` : `<span class="qc-mark">${esc(habitIcon(h))}</span>`}
           <span class="qc-word">${esc(habitWord(h))}</span>
           ${on ? '<span class="qc-check" aria-hidden="true">✓</span>' : ''}
         </button>`;

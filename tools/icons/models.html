@@ -1,0 +1,375 @@
+<!doctype html><html><head><meta charset="utf-8">
+<script type="importmap">{"imports":{"three":"./node_modules/three/build/three.module.js","three/addons/":"./node_modules/three/examples/jsm/"}}</script>
+<style>html,body{margin:0;background:transparent}</style></head><body>
+<script type="module">
+import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
+const V = (x, y, z = 0) => new THREE.Vector3(x, y, z), V2 = (x, y) => new THREE.Vector2(x, y);
+const S = 1024;
+const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
+renderer.setSize(S, S); renderer.setPixelRatio(1);
+renderer.toneMapping = THREE.NeutralToneMapping; renderer.toneMappingExposure = 0.95;
+renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.VSMShadowMap;
+renderer.outputColorSpace = THREE.SRGBColorSpace;
+document.body.appendChild(renderer.domElement);
+const pm = new THREE.PMREMGenerator(renderer);
+const envTex = pm.fromScene(new RoomEnvironment(), 0.04).texture;
+
+const mats = {};
+function M(c, o = {}) {
+  const k = c + JSON.stringify(o);
+  return mats[k] ||= new THREE.MeshPhysicalMaterial({ color: new THREE.Color(c), roughness: 0.22, metalness: 0, clearcoat: 1, clearcoatRoughness: 0.06, side: THREE.DoubleSide, ...o });
+}
+const C = { red: '#ff4d6d', blue: '#3d7bff', yellow: '#ffc233', green: '#34c77b', orange: '#ff8a3d', purple: '#8b6cff', pink: '#ff7ab6', teal: '#22c3c3',
+  white: '#f7f7fb', cream: '#fffaf0', brown: '#a0623a', dark: '#3a3a4a', sky: '#2fa8ff', gold: '#ffb800', grey: '#c9ccd6', leaf: '#2fbf71' };
+
+function mesh(geo, c, o) { const m = new THREE.Mesh(geo, typeof c === 'string' ? M(c, o) : c); m.castShadow = m.receiveShadow = true; return m; }
+function at(m, x = 0, y = 0, z = 0, rx = 0, ry = 0, rz = 0, s) { m.position.set(x, y, z); m.rotation.set(rx, ry, rz); if (s) Array.isArray(s) ? m.scale.set(...s) : m.scale.setScalar(s); return m; }
+const box = (w, h, d, r = 0.08) => new RoundedBoxGeometry(w, h, d, 5, Math.min(r, w / 2.01, h / 2.01, d / 2.01));
+const cyl = (rt, rb, h, n = 64) => new THREE.CylinderGeometry(rt, rb, h, n);
+const sph = (r) => new THREE.SphereGeometry(r, 64, 48);
+const tor = (R, r, arc = Math.PI * 2) => new THREE.TorusGeometry(R, r, 32, 96, arc);
+const cap = (r, l) => new THREE.CapsuleGeometry(r, l, 16, 48);
+function ext(shape, depth = 0.5, bevel = 0.12) {
+  const g = new THREE.ExtrudeGeometry(shape, { depth, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel * 0.9, bevelSegments: 10, curveSegments: 48 });
+  g.translate(0, 0, -depth / 2); return g;
+}
+function lathe(pts, n = 96) { const g = new THREE.LatheGeometry(pts.map(p => V2(p[0], p[1])), n); g.computeVertexNormals(); return g; }
+function tube(points, r, closed = false) { return new THREE.TubeGeometry(new THREE.CatmullRomCurve3(points, closed), 128, r, 24, closed); }
+function circleShape(r, x = 0, y = 0) { const s = new THREE.Shape(); s.absarc(x, y, r, 0, Math.PI * 2); return s; }
+function group(...ch) { const g = new THREE.Group(); ch.forEach(c => g.add(c)); return g; }
+// Red "no" sign in front of something
+function noSign(r = 1.15, y = 1.15, z = 0.6) {
+  return group(at(mesh(tor(r, 0.13), C.red), 0, y, z), at(mesh(cap(0.12, r * 1.75), C.red), 0, y, z, 0, 0, Math.PI / 4));
+}
+function heartShape(s = 1) {
+  const h = new THREE.Shape();
+  h.moveTo(0, -1 * s);
+  h.bezierCurveTo(-0.3 * s, -0.7 * s, -1.2 * s, -0.2 * s, -1.1 * s, 0.4 * s);
+  h.bezierCurveTo(-1.0 * s, 1.0 * s, -0.25 * s, 1.15 * s, 0, 0.6 * s);
+  h.bezierCurveTo(0.25 * s, 1.15 * s, 1.0 * s, 1.0 * s, 1.1 * s, 0.4 * s);
+  h.bezierCurveTo(1.2 * s, -0.2 * s, 0.3 * s, -0.7 * s, 0, -1 * s);
+  return h;
+}
+function starShape(R = 1, r = 0.48, n = 5) {
+  const s = new THREE.Shape();
+  for (let i = 0; i <= n * 2; i++) { const a = Math.PI / 2 + i * Math.PI / n, rr = i % 2 ? r : R; i ? s.lineTo(Math.cos(a) * rr, Math.sin(a) * rr) : s.moveTo(Math.cos(a) * rr, Math.sin(a) * rr); }
+  return s;
+}
+function moonShape(R = 1) {
+  const s = new THREE.Shape(); s.absarc(0, 0, R, Math.PI * 0.35, Math.PI * 1.65, false);
+  s.absarc(0.45 * R, 0.12 * R, R * 0.82, Math.PI * 1.5, Math.PI * 0.55, true); return s;
+}
+function dropPts(h = 2.1, w = 0.95) {
+  const pts = [];
+  for (let i = 0; i <= 64; i++) { const a = (i / 64) * Math.PI; pts.push([Math.max(Math.sin(a) * Math.pow(Math.sin(a / 2), 1.6) * w, 1e-4), (1 + Math.cos(a)) * h / 2]); }
+  return pts;
+}
+function zShape(s = 1) {
+  const z = new THREE.Shape(); z.moveTo(-0.5*s, 0.5*s); z.lineTo(0.5*s, 0.5*s); z.lineTo(0.5*s, 0.3*s); z.lineTo(-0.15*s, -0.3*s); z.lineTo(0.5*s, -0.3*s); z.lineTo(0.5*s, -0.5*s);
+  z.lineTo(-0.5*s, -0.5*s); z.lineTo(-0.5*s, -0.3*s); z.lineTo(0.15*s, 0.3*s); z.lineTo(-0.5*s, 0.3*s); z.closePath(); return z;
+}
+function book(w, h, d, color) {
+  return group(mesh(box(w, h, d, 0.06), color), at(mesh(box(w * 0.94, h * 0.72, d * 0.95, 0.03), C.cream), w * 0.04),
+    at(mesh(box(0.1, h * 1.02, d * 1.01, 0.02), C.white), -w * 0.3));
+}
+
+function sneaker() {
+  const p = new THREE.Shape();
+  p.moveTo(-1.4, 0); p.lineTo(1.35, 0); p.bezierCurveTo(1.6, 0.0, 1.62, 0.45, 1.3, 0.55);   // toe
+  p.bezierCurveTo(0.9, 0.65, 0.55, 0.8, 0.05, 1.12);                                        // lace line
+  p.bezierCurveTo(-0.05, 1.3, -0.15, 1.5, -0.3, 1.48);                                      // tongue
+  p.bezierCurveTo(-0.45, 1.2, -0.75, 1.05, -0.95, 1.1);                                     // collar dip
+  p.bezierCurveTo(-1.2, 1.2, -1.35, 1.3, -1.45, 1.2);                                       // heel top
+  p.bezierCurveTo(-1.55, 0.8, -1.5, 0.3, -1.4, 0);
+  const up = at(mesh(ext(p, 0.85, 0.16), C.orange), 0, 0.28, 0);
+  const sole = at(mesh(box(3.15, 0.34, 1.2, 0.15), C.white), 0.02, 0.17, 0);
+  const toe = at(mesh(sph(0.5), C.white), 1.4, 0.55, 0, 0, 0, -0.35, [0.55, 0.32, 1.0]);
+  const collar = at(mesh(sph(0.4), C.dark), -0.85, 1.55, 0, 0, 0, 0.05, [1.05, 0.16, 0.62]);
+  const tab = at(mesh(box(0.22, 0.55, 0.55, 0.09), C.blue), -1.62, 1.45, 0, 0, 0, 0.15);
+  const swoosh = [0.6, -0.6].map(z => mesh(tube([V(-1.2, 1.25, z), V(-0.5, 0.8, z * 1.02), V(0.3, 0.85, z), V(0.95, 1.05, z * 0.92)], 0.07), C.blue));
+  const laces = [0, 1, 2, 3].map(i => at(mesh(cap(0.055, 0.95), C.white), 0.75 - i * 0.24, 1.17 + i * 0.13, 0, Math.PI / 2, 0, 0.55));
+  return at(group(sole, up, toe, collar, tab, ...swoosh, ...laces), 0, 0, 0, 0, -0.1, 0);
+}
+function dumbbell(s = 1) {
+  const bar = at(mesh(cyl(0.12, 0.12, 2.6), C.grey, { metalness: 0.8, roughness: 0.2 }), 0, 0, 0, 0, 0, Math.PI / 2);
+  const plates = [-1, 1].flatMap(k => [at(mesh(cyl(0.65, 0.65, 0.32), C.blue), k * 0.85, 0, 0, 0, 0, Math.PI / 2),
+    at(mesh(cyl(0.5, 0.5, 0.26), C.blue), k * 1.15, 0, 0, 0, 0, Math.PI / 2), at(mesh(cyl(0.18, 0.18, 0.2), C.dark), k * 1.33, 0, 0, 0, 0, Math.PI / 2)]);
+  return at(group(bar, ...plates), 0, 0.65 * s, 0, 0, 0, 0, s);
+}
+function bed() {
+  const frame = at(mesh(box(2.6, 0.35, 1.7, 0.12), C.brown), 0, 0.35, 0);
+  const legs = [[-1.15, -0.7], [1.15, -0.7], [-1.15, 0.7], [1.15, 0.7]].map(([x, z]) => at(mesh(cyl(0.08, 0.08, 0.3), C.brown), x, 0.15, z));
+  const head = at(mesh(box(0.22, 1.5, 1.7, 0.1), C.brown), -1.25, 0.95, 0);
+  const mattress = at(mesh(box(2.4, 0.3, 1.6, 0.14), C.white), 0.05, 0.65, 0);
+  const pillow = at(mesh(box(0.6, 0.25, 1.2, 0.12), C.white), -0.8, 0.9, 0);
+  const blanket = at(mesh(box(1.55, 0.18, 1.68, 0.09), C.blue), 0.48, 0.86, 0);
+  const moon = at(mesh(ext(moonShape(0.45), 0.2, 0.08), C.yellow), 0.3, 1.9, 0, 0, -0.3, 0.3);
+  const st = at(mesh(ext(starShape(0.2, 0.09), 0.07, 0.04), C.purple), 0.95, 2.2, 0, 0, -0.3, 0);
+  return at(group(frame, ...legs, head, mattress, pillow, blanket, moon, st), 0, 0, 0, 0, -0.35, 0);
+}
+function tooth() {
+  const t = new THREE.Shape(); t.moveTo(-0.9, 0.9); t.bezierCurveTo(-1.1, 1.6, -0.3, 1.7, 0, 1.45); t.bezierCurveTo(0.3, 1.7, 1.1, 1.6, 0.9, 0.9);
+  t.bezierCurveTo(0.75, 0.3, 0.6, -0.6, 0.4, -0.65); t.bezierCurveTo(0.2, -0.7, 0.15, 0.1, 0, 0.1); t.bezierCurveTo(-0.15, 0.1, -0.2, -0.7, -0.4, -0.65); t.bezierCurveTo(-0.6, -0.6, -0.75, 0.3, -0.9, 0.9);
+  return at(mesh(ext(t, 0.6, 0.25), C.white), 0, 0.95, 0);
+}
+function toothbrush(c) {
+  const handle = at(mesh(cap(0.11, 2.0), c), 0, 1.15, 0);
+  const headB = at(mesh(box(0.3, 0.6, 0.18, 0.08), c), 0, 2.4, 0);
+  const bristles = at(mesh(box(0.26, 0.5, 0.2, 0.04), C.white), 0, 2.42, 0.17);
+  const paste = at(mesh(cap(0.1, 0.35), C.sky), 0, 2.45, 0.32, 0, 0, 0);
+  return group(handle, headB, bristles, paste);
+}
+function sparkle(x, y, z, r) { return at(mesh(ext(starShape(r, r * 0.32, 4), 0.08, 0.04), C.sky), x, y, z, 0, -0.3, 0); }
+
+// Every model stands on y = 0 and faces +z (the camera sits front-right, slightly above).
+const MODELS = {
+  read: () => group(
+    at(book(2.0, 0.42, 1.45, C.blue), 0, 0.21, 0, 0, 0.12),
+    at(book(1.8, 0.36, 1.3, C.red), 0, 0.6, 0, 0, -0.22),
+    at(book(1.6, 0.32, 1.18, C.yellow), 0, 0.94, 0, 0, 0.3),
+    at(mesh(box(0.14, 0.03, 0.5, 0.01), C.red), 0.3, 1.1, 0.7, 0.9, 0.3)),
+  run: () => sneaker(),
+  meditate: () => { // lotus
+    const g = new THREE.Group();
+    const petal = (r, tilt, col, n, y, sc) => { for (let i = 0; i < n; i++) { const a = i / n * Math.PI * 2 + r;
+      const m = at(mesh(sph(0.5), col), Math.cos(a) * 0.55 * sc, y, Math.sin(a) * 0.55 * sc, 0, -a, tilt, [1.2 * sc, 0.32 * sc, 0.55 * sc]); g.add(m); } };
+    petal(0, 0.5, C.pink, 8, 0.35, 1.25); petal(0.4, 0.9, '#ff9fcb', 6, 0.6, 0.85);
+    g.add(at(mesh(sph(0.3), C.yellow), 0, 0.75, 0));
+    g.add(at(mesh(cyl(1.6, 1.6, 0.12), C.green), 0, 0.06, 0));
+    return g;
+  },
+  stretch: () => { // rolled yoga mat
+    const roll = at(mesh(cyl(0.6, 0.6, 2.2), C.purple), 0, 0.6, -0.2, 0, 0, Math.PI / 2);
+    const end = at(mesh(cyl(0.45, 0.45, 2.22), '#a996ff'), 0, 0.6, -0.2, 0, 0, Math.PI / 2);
+    const flat = at(mesh(box(2.2, 0.1, 1.6, 0.05), C.purple), 0, 0.05, 1.0);
+    const strap = at(mesh(tor(0.63, 0.06), C.white), 0.6, 0.6, -0.2, 0, Math.PI / 2, 0);
+    return at(group(roll, end, flat, strap), 0, 0, 0, 0, -0.4, 0);
+  },
+  gym: () => at(dumbbell(), 0, 0, 0, 0, -0.55, 0.12),
+  walk: () => { // two footprints
+    const foot = (x, z, ry, col) => { const g = group(at(mesh(sph(0.5), col), 0, 0, 0, 0, 0, 0, [0.65, 0.22, 1.05]),
+      at(mesh(sph(0.38), col), 0, 0, -0.85, 0, 0, 0, [0.55, 0.2, 0.55]),
+      ...[[-0.3, -1.4, 0.15], [-0.08, -1.5, 0.14], [0.13, -1.47, 0.12], [0.3, -1.36, 0.1], [0.42, -1.2, 0.09]].map(([a, b, r]) => at(mesh(sph(r), col), a, 0, b, 0, 0, 0, [1, 0.8, 1])));
+      return at(g, x, 0.12, z, 0, ry, 0); };
+    return group(foot(-0.55, 0.6, 0.2, C.teal), foot(0.6, -0.3, 0.1, C.teal));
+  },
+  bike: () => {
+    const wheel = x => group(at(mesh(tor(0.75, 0.11), C.dark), x, 0.86, 0), at(mesh(tor(0.6, 0.03), C.grey), x, 0.86, 0), at(mesh(cyl(0.1, 0.1, 0.15), C.grey), x, 0.86, 0, Math.PI / 2));
+    const fr = C.red, r = 0.07;
+    const frame = [mesh(tube([V(-1.1, 0.86), V(-0.1, 0.86)], r), fr), mesh(tube([V(-0.1, 0.86), V(0.75, 1.75)], r), fr), mesh(tube([V(-1.1, 0.86), V(-0.55, 1.7)], r), fr),
+      mesh(tube([V(-0.55, 1.7), V(0.75, 1.75)], r), fr), mesh(tube([V(-0.1, 0.86), V(-0.6, 1.8)], r), fr), mesh(tube([V(1.1, 0.86), V(0.8, 1.95)], r), fr)];
+    const seat = at(mesh(cap(0.12, 0.35), C.dark), -0.65, 1.92, 0, 0, 0, Math.PI / 2);
+    const bars = at(mesh(cap(0.07, 0.6), C.dark), 0.82, 2.0, 0, Math.PI / 2);
+    return at(group(wheel(-1.1), wheel(1.1), ...frame, seat, bars), 0, 0, 0, 0, -0.35, 0);
+  },
+  swim: () => { // life ring
+    const g = new THREE.Group();
+    for (let i = 0; i < 8; i++) g.add(at(mesh(tor(1.0, 0.38, Math.PI / 4 + 0.002), i % 2 ? C.white : C.red), 0, 0, 0, 0, 0, i * Math.PI / 4));
+    g.add(at(mesh(tor(1.0, 0.04), C.yellow), 0, 0, 0.36));
+    return at(g, 0, 1.4, 0, -0.25, -0.35, 0);
+  },
+  water: () => { const d = lathe(dropPts()); return group(mesh(d, C.sky, { roughness: 0.08 }), at(mesh(d, C.sky, { roughness: 0.08 }), 1.15, 0, 0.55, 0, 0, 0, 0.38), at(mesh(tor(1.25, 0.06), C.sky), 0, 0.06, 0, -Math.PI / 2)); },
+  sugar: () => { // wrapped candy + no sign
+    const candy = group(mesh(sph(0.6), C.pink), at(mesh(cyl(0.05, 0.45, 0.6), C.pink), -0.85, 0, 0, 0, 0, Math.PI / 2), at(mesh(cyl(0.05, 0.45, 0.6), C.pink), 0.85, 0, 0, 0, 0, -Math.PI / 2),
+      at(mesh(tor(0.6, 0.06), C.white), 0, 0, 0, 0, Math.PI / 2, 0));
+    return group(at(candy, 0, 1.15, 0, 0, 0, 0.35), noSign());
+  },
+  smoke: () => {
+    const cig = group(at(mesh(cyl(0.18, 0.18, 1.6), C.white), 0.3, 0, 0, 0, 0, Math.PI / 2), at(mesh(cyl(0.185, 0.185, 0.6), C.orange), -0.8, 0, 0, 0, 0, Math.PI / 2),
+      at(mesh(cyl(0.17, 0.17, 0.1), C.grey), 1.12, 0, 0, 0, 0, Math.PI / 2));
+    return group(at(cig, 0, 1.15, 0, 0, 0, 0.4), noSign());
+  },
+  alcohol: () => {
+    const glass = mesh(lathe([[0, 0.02], [0.6, 0.02], [0.62, 0.08], [0.08, 0.15], [0.06, 1.0], [0.1, 1.08], [0.5, 1.3], [0.62, 1.8], [0.6, 2.3], [0.56, 2.3]]), C.white, { transmission: 1, thickness: 0.3, roughness: 0.05 });
+    const wine = mesh(lathe([[0, 1.12], [0.48, 1.32], [0.585, 1.75], [0, 1.75]]), '#c2185b');
+    return group(glass, wine);
+  },
+  coffee: () => {
+    const mug = mesh(lathe([[0, 0], [0.7, 0], [0.75, 0.08], [0.75, 1.3], [0.66, 1.3], [0.66, 0.12], [0, 0.12]]), C.white);
+    const coffee = at(mesh(cyl(0.66, 0.66, 0.05), C.brown), 0, 1.15, 0);
+    const handle = at(mesh(tor(0.34, 0.1, Math.PI * 1.2), C.white), 0.75, 0.65, 0, 0, 0, -Math.PI * 0.6);
+    const steam = [-0.2, 0.2].map(x => mesh(tube([V(x, 1.4), V(x + 0.15, 1.7), V(x - 0.1, 2.0), V(x + 0.1, 2.3)], 0.06), C.grey));
+    const band = at(mesh(cyl(0.76, 0.76, 0.25), C.orange), 0, 0.6, 0);
+    return at(group(mug, coffee, handle, band, ...steam), 0, 0, 0, 0, -0.5, 0);
+  },
+  food: () => { // salad bowl
+    const bowl = mesh(lathe([[0, 0], [0.5, 0], [0.55, 0.05], [1.2, 0.7], [1.3, 0.8], [1.2, 0.82], [0.5, 0.15], [0, 0.15]]), C.white);
+    const g = group(bowl);
+    for (let i = 0; i < 9; i++) { const a = i * 2.4, r = 0.25 + (i % 3) * 0.3; g.add(at(mesh(sph(0.42), i % 2 ? C.green : C.leaf), Math.cos(a) * r, 0.75, Math.sin(a) * r, i, 0, 0.3 * i, [1, 0.45, 0.8])); }
+    g.add(at(mesh(sph(0.22), C.red), 0.35, 1.0, 0.35), at(mesh(sph(0.2), C.red), -0.45, 0.95, 0.1), at(mesh(sph(0.15), C.yellow), 0.0, 1.02, -0.4));
+    return g;
+  },
+  apple: () => {
+    const body = mesh(lathe(Array.from({ length: 41 }, (_, i) => { const t = i / 40 * Math.PI; return [Math.max(Math.sin(t) * (0.95 + 0.12 * Math.sin(t * 2)), 1e-4), 0.95 - Math.cos(t) * 0.9 + (t < 0.3 || t > 2.8 ? -0.12 * Math.cos(t) : 0)]; }).reverse()), C.red);
+    const leaf = new THREE.Shape(); leaf.moveTo(0, 0); leaf.quadraticCurveTo(0.35, 0.3, 0, 0.75); leaf.quadraticCurveTo(-0.35, 0.3, 0, 0);
+    return group(at(body, 0, 0.05, 0), at(mesh(cyl(0.05, 0.06, 0.45), C.brown), 0.05, 1.95, 0, 0, 0, -0.2), at(mesh(ext(leaf, 0.04, 0.03), C.leaf), 0.25, 1.95, 0, 0, 0, -1.0));
+  },
+  sleep: () => bed(),
+  teeth: () => group(at(tooth(), -0.35, 0, 0, 0, -0.3, 0), at(toothbrush(C.sky), 1.25, 0.05, 0.9, 0, 0, -0.3), sparkle(-1.3, 2.1, 0.3, 0.3), sparkle(0.2, 2.35, 0.3, 0.2)),
+  skin: () => {
+    const jar = mesh(lathe([[0, 0], [0.9, 0], [0.95, 0.08], [0.95, 0.75], [0, 0.75]]), C.pink);
+    const lid = at(mesh(cyl(1.0, 1.0, 0.35), C.white), 0, 0.92, 0);
+    const tubeB = at(mesh(cap(0.3, 1.2), C.teal), 1.15, 0.33, 0.6, 0, 0.3, Math.PI / 2, [1, 1, 0.55]);
+    const tCap = at(mesh(cyl(0.2, 0.2, 0.3), C.white), 2.0, 0.33, 0.85, 0, 0.3, Math.PI / 2);
+    return group(jar, lid, tubeB, tCap);
+  },
+  vitamin: () => {
+    const half = (c, s) => group(at(mesh(new THREE.SphereGeometry(0.38, 48, 32, 0, Math.PI * 2, 0, Math.PI / 2), c), 0, 0.45 * s, 0, s < 0 ? Math.PI : 0), at(mesh(cyl(0.38, 0.38, 0.45, 48), c), 0, 0.225 * s, 0));
+    const capsule = at(group(half(C.orange, 1), half(C.yellow, -1)), -0.2, 0.62, 0, 0, 0, 1.15);
+    const pill = at(mesh(cyl(0.38, 0.38, 0.22), C.white), 0.85, 0.11, 0.55);
+    const line = at(mesh(box(0.6, 0.03, 0.06, 0.01), C.grey), 0.85, 0.235, 0.55);
+    return group(capsule, pill, line, at(mesh(cyl(0.3, 0.3, 0.18), C.green), -0.9, 0.09, 0.8));
+  },
+  journal: () => {
+    const cover = mesh(box(1.7, 2.2, 0.28, 0.1), C.purple);
+    const pages = at(mesh(box(1.6, 2.1, 0.22, 0.05), C.cream), 0.06, 0, 0);
+    const rings = Array.from({ length: 6 }, (_, i) => at(mesh(tor(0.13, 0.04), C.grey, { metalness: 0.8 }), -0.85, -0.85 + i * 0.34, 0, 0, Math.PI / 2, 0));
+    const label = at(mesh(box(0.9, 0.35, 0.05, 0.05), C.white), 0.1, 0.5, 0.15);
+    const band = at(mesh(box(0.12, 2.22, 0.3, 0.03), C.yellow), 0.55, 0, 0);
+    return at(group(cover, pages, ...rings, label, band), 0, 1.2, 0, -0.1, -0.35, 0.08);
+  },
+  write: () => {
+    const body = at(mesh(cyl(0.22, 0.22, 2.2, 6), C.yellow), 0, 0, 0);
+    const wood = at(mesh(cyl(0.22, 0.02, 0.5, 6), '#f4c99a'), 0, -1.35, 0);
+    const tip = at(mesh(cyl(0.065, 0.0, 0.15, 24), C.dark), 0, -1.6, 0);
+    const ferrule = at(mesh(cyl(0.23, 0.23, 0.25), C.grey, { metalness: 0.8 }), 0, 1.22, 0);
+    const eraser = at(mesh(cap(0.22, 0.12), C.pink), 0, 1.45, 0);
+    const line = mesh(tube([V(-1.4, 0.03, 0.6), V(-0.8, 0.03, 0.2), V(-0.3, 0.03, 0.7), V(0.25, 0.03, 0.35)], 0.05), C.blue);
+    return group(at(group(body, wood, tip, ferrule, eraser), 0.55, 1.35, 0, 0, 0, -0.6), line);
+  },
+  learn: () => { // graduation cap
+    const top = at(mesh(box(2.4, 0.12, 2.4, 0.05), C.dark), 0, 1.05, 0, 0, Math.PI / 4, 0);
+    const base = at(mesh(cyl(0.75, 0.8, 0.6), C.dark), 0, 0.68, 0);
+    const btn = at(mesh(cyl(0.12, 0.12, 0.08), C.gold), 0, 1.14, 0);
+    const cord = mesh(tube([V(0, 1.15), V(0.8, 1.13, 0.35), V(1.15, 1.0, 0.5), V(1.2, 0.6, 0.55)], 0.03), C.gold);
+    const tassel = at(mesh(cyl(0.05, 0.14, 0.4), C.gold), 1.2, 0.4, 0.55);
+    return group(base, top, btn, cord, tassel);
+  },
+  music: () => {
+    const head = (x, y) => at(mesh(sph(0.38), C.purple), x, y, 0, 0, 0, 0.4, [1.25, 0.9, 0.7]);
+    return at(group(head(-0.5, 0.4), head(0.8, 0.7), at(mesh(cyl(0.07, 0.07, 1.9), C.purple), -0.08, 1.3, 0), at(mesh(cyl(0.07, 0.07, 1.9), C.purple), 1.22, 1.6, 0),
+      at(mesh(box(1.45, 0.3, 0.16, 0.05), C.purple), 0.57, 2.25, 0, 0, 0, 0.21)), 0, 0, 0, 0, -0.3, 0);
+  },
+  art: () => {
+    const p = new THREE.Shape(); p.absellipse(0, 0, 1.3, 1.0, 0, Math.PI * 2); p.holes.push(circleShape(0.2, 0.55, -0.35));
+    const pal = at(mesh(ext(p, 0.12, 0.06), '#f0c48a'), 0, 0.12, 0, -Math.PI / 2, 0, 0.4);
+    const blobs = [[C.red, -0.6, 0.3], [C.yellow, -0.15, 0.6], [C.blue, 0.4, 0.55], [C.green, -0.75, -0.25]].map(([c, x, z]) => at(mesh(sph(0.22), c), x, 0.25, -z, 0, 0, 0, [1, 0.5, 1]));
+    const brush = group(at(mesh(cyl(0.06, 0.08, 1.6), C.red), 0, 0, 0), at(mesh(cyl(0.08, 0.08, 0.2), C.grey, { metalness: 0.8 }), 0, 0.9, 0), at(mesh(cyl(0.08, 0.01, 0.35), C.dark), 0, 1.15, 0));
+    return group(pal, ...blobs, at(brush, 0.4, 0.9, 0.3, 0.3, 0, -0.9));
+  },
+  code: () => {
+    const base = at(mesh(box(2.6, 0.12, 1.7, 0.06), C.grey, { metalness: 0.5 }), 0, 0.06, 0.4);
+    const screen = at(group(mesh(box(2.6, 1.7, 0.1, 0.06), C.grey, { metalness: 0.5 }), at(mesh(box(2.4, 1.5, 0.02, 0.02), C.dark), 0, 0, 0.055)), 0, 0.95, -0.42, -0.2);
+    const lt = new THREE.Shape(); lt.moveTo(0.3, 0.4); lt.lineTo(-0.2, 0); lt.lineTo(0.3, -0.4); lt.lineTo(0.3, -0.22); lt.lineTo(0.02, 0); lt.lineTo(0.3, 0.22); lt.closePath();
+    const sl = new THREE.Shape(); sl.moveTo(0.1, 0.45); sl.lineTo(0.25, 0.45); sl.lineTo(-0.1, -0.45); sl.lineTo(-0.25, -0.45); sl.closePath();
+    const glyph = (s, x, flip) => at(mesh(ext(s, 0.04, 0.02), C.green), x, 0.98, -0.32, -0.2, flip ? Math.PI : 0, 0);
+    return group(base, screen, glyph(lt, -0.5), glyph(sl, 0), glyph(lt, 0.5, true), at(mesh(box(1.0, 0.02, 0.5, 0.01), C.dark), 0, 0.13, 0.75));
+  },
+  phone: () => {
+    const ph = group(mesh(box(1.2, 2.3, 0.18, 0.2), C.dark), at(mesh(box(1.05, 2.1, 0.02, 0.12), C.blue), 0, 0, 0.095));
+    return group(at(ph, 0, 1.2, -0.1, 0, -0.25, 0), noSign(1.25, 1.2, 0.35));
+  },
+  clean: () => { // spray bottle + bubbles
+    const bottle = mesh(lathe([[0, 0], [0.55, 0], [0.6, 0.08], [0.6, 1.3], [0.35, 1.6], [0.25, 1.7], [0, 1.7]]), C.teal);
+    const head = at(mesh(box(0.5, 0.35, 0.9, 0.1), C.white), 0, 1.85, 0.15);
+    const trigger = at(mesh(box(0.15, 0.4, 0.15, 0.05), C.white), 0, 1.55, 0.45, 0.3);
+    const label = at(mesh(cyl(0.615, 0.615, 0.5), C.white), 0, 0.7, 0);
+    const bubbles = [[0.9, 1.9, 0.5, 0.25], [1.25, 1.4, 0.3, 0.17], [0.8, 1.1, 0.8, 0.12]].map(([x, y, z, r]) => at(mesh(sph(r), C.white, { transmission: 1, thickness: 0.2, iridescence: 1, roughness: 0.05 }), x, y, z));
+    return at(group(bottle, head, trigger, label, ...bubbles), 0, 0, 0, 0, -0.4, 0);
+  },
+  plant: () => {
+    const pot = mesh(lathe([[0, 0], [0.55, 0], [0.75, 1.0], [0.82, 1.0], [0.82, 1.15], [0, 1.15]]), C.orange);
+    const soil = at(mesh(cyl(0.74, 0.74, 0.05), C.brown), 0, 1.12, 0);
+    const leaf = new THREE.Shape(); leaf.moveTo(0, 0); leaf.bezierCurveTo(0.45, 0.3, 0.4, 0.95, 0, 1.3); leaf.bezierCurveTo(-0.4, 0.95, -0.45, 0.3, 0, 0);
+    const leaves = [[-0.5, 0], [0.5, 0], [0, 0.15], [-0.25, 0.9], [0.3, -0.9]].map(([rz, ry], i) => at(mesh(ext(leaf, 0.05, 0.05), i % 2 ? C.green : C.leaf), 0, 1.1, 0, 0, ry, rz, 1 - i * 0.05));
+    return group(pot, soil, ...leaves);
+  },
+  dog: () => { // paw print
+    const pad = new THREE.Shape(); pad.absellipse(0, 0, 0.75, 0.6, 0, Math.PI * 2);
+    const g = group(at(mesh(ext(pad, 0.25, 0.12), C.brown), 0, 0, 0));
+    [[-0.85, 0.75, 0.3], [-0.32, 1.15, 0.32], [0.32, 1.15, 0.32], [0.85, 0.75, 0.3]].forEach(([x, y, r]) => { const s = new THREE.Shape(); s.absellipse(0, 0, r, r * 1.2, 0, Math.PI * 2); g.add(at(mesh(ext(s, 0.25, 0.1), C.brown), x, y, 0)); });
+    return at(g, 0, 0.9, 0, 0, -0.3, 0);
+  },
+  money: () => {
+    const coin = (x, y, z) => group(at(mesh(cyl(0.7, 0.7, 0.18), C.gold, { metalness: 0.6, roughness: 0.2 }), x, y, z), at(mesh(cyl(0.55, 0.55, 0.19), '#ffd34d', { metalness: 0.6, roughness: 0.2 }), x, y + 0.005, z));
+    const stack = Array.from({ length: 5 }, (_, i) => coin(0.05 * (i % 2), 0.09 + i * 0.19, 0));
+    const lone = at(group(mesh(cyl(0.7, 0.7, 0.18), C.gold, { metalness: 0.6, roughness: 0.2 }), at(mesh(cyl(0.55, 0.55, 0.19), '#ffd34d', { metalness: 0.6, roughness: 0.2 }))), 1.0, 0.7, 0.6, Math.PI / 2 - 0.2, 0, 0.3);
+    return group(...stack, lone);
+  },
+  gratitude: () => at(mesh(ext(heartShape(1), 0.5, 0.25), C.red), 0, 1.25, 0, 0, -0.3, 0),
+  morning: () => {
+    const g = group(mesh(sph(0.8), C.yellow));
+    for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2; g.add(at(mesh(cap(0.11, 0.35), C.orange), Math.cos(a) * 1.25, Math.sin(a) * 1.25, 0, 0, 0, a - Math.PI / 2)); }
+    return at(g, 0, 1.55, 0, 0, -0.3, 0);
+  },
+  evening: () => group(at(mesh(ext(moonShape(1.1), 0.4, 0.18), C.yellow), 0, 1.35, 0, 0, -0.3, 0.25),
+    at(mesh(ext(starShape(0.3, 0.13), 0.1, 0.06), C.purple), 1.1, 2.2, 0.2, 0, -0.3, 0), at(mesh(ext(starShape(0.2, 0.09), 0.08, 0.05), C.purple), 1.3, 1.2, 0.3, 0, -0.3, 0.3)),
+  call: () => {
+    const b = new THREE.Shape(); b.moveTo(-1.0, 0.2); b.absarc(-0.6, 0.6, 0.4, Math.PI, Math.PI * 1.5, false); b.lineTo(0.6, 0.2); b.absarc(0.6, 0.6, 0.4, -Math.PI / 2, 0, false);
+    b.lineTo(1.0, 1.2); b.absarc(0.6, 1.2, 0.4, 0, Math.PI / 2, false); b.lineTo(-0.6, 1.6); b.absarc(-0.6, 1.2, 0.4, Math.PI / 2, Math.PI, false); b.lineTo(-1.0, 0.6);
+    b.moveTo(-1.0, 0.6);
+    const bubble = new THREE.Shape(); bubble.moveTo(-0.6, 0.2); bubble.lineTo(0.6, 0.2); bubble.quadraticCurveTo(1.0, 0.2, 1.0, 0.6); bubble.lineTo(1.0, 1.2); bubble.quadraticCurveTo(1.0, 1.6, 0.6, 1.6);
+    bubble.lineTo(-0.6, 1.6); bubble.quadraticCurveTo(-1.0, 1.6, -1.0, 1.2); bubble.lineTo(-1.0, 0.6); bubble.quadraticCurveTo(-1.0, 0.25, -0.75, 0.2); bubble.lineTo(-0.9, -0.15); bubble.lineTo(-0.45, 0.2); bubble.closePath();
+    const dots = [-0.45, 0, 0.45].map(x => at(mesh(sph(0.13), C.white), x, 1.05, 0.4));
+    return at(group(at(mesh(ext(bubble, 0.4, 0.15), C.green), 0, 0.15, 0), ...dots), 0, 0, 0, 0, -0.3, 0);
+  },
+  'teeth-night': () => group(at(tooth(), -0.35, 0, 0, 0, -0.3, 0), at(toothbrush(C.purple), 1.25, 0.05, 0.9, 0, 0, -0.3),
+    at(mesh(ext(moonShape(0.42), 0.18, 0.07), C.yellow), -1.35, 2.2, 0.2, 0, -0.3, 0.3), sparkle(0.25, 2.4, 0.3, 0.2)),
+  'morning-health': () => {
+    const sun = group(mesh(sph(0.55), C.yellow)); for (let i = 0; i < 10; i++) { const a = i / 10 * Math.PI * 2; sun.add(at(mesh(cap(0.08, 0.22), C.orange), Math.cos(a) * 0.85, Math.sin(a) * 0.85, 0, 0, 0, a - Math.PI / 2)); }
+    const cup = mesh(lathe([[0, 0], [0.42, 0], [0.48, 0.9], [0.43, 0.9], [0.38, 0.1], [0, 0.1]]), C.teal);
+    const brush = at(toothbrush(C.pink), 0.05, 0.25, 0, 0, 0, 0.2);
+    const jar = at(group(mesh(lathe([[0, 0], [0.5, 0], [0.53, 0.06], [0.53, 0.45], [0, 0.45]]), C.white), at(mesh(cyl(0.56, 0.56, 0.22), C.pink), 0, 0.56, 0)), 0.95, 0, 0.55);
+    return group(at(sun, -0.6, 2.2, -1.0), at(group(cup, brush), -0.4, 0, 0), jar);
+  },
+  physio: () => { // resistance band with two handles
+    const band = mesh(tube([V(-0.9, 0.35, 0.3), V(-0.5, 1.3, 0), V(0, 1.8, -0.2), V(0.5, 1.3, 0), V(0.9, 0.35, 0.3)], 0.1), C.green);
+    const handle = (x) => group(at(mesh(cap(0.16, 0.6), C.dark), x, 0.22, 0.3, 0, 0, Math.PI / 2), at(mesh(tor(0.2, 0.05, Math.PI), C.grey, { metalness: 0.7 }), x, 0.3, 0.3));
+    return group(band, handle(-0.95), handle(0.95));
+  },
+  'run-gym': () => group(at(sneaker(), -0.35, 0, 0.45, 0, 0, 0, 0.85), at(dumbbell(0.85), 1.45, 0.5, -0.5, 0, -0.9, 0)),
+  inspect: () => {
+    const base = at(mesh(box(2.6, 0.12, 1.7, 0.06), C.grey, { metalness: 0.5 }), 0, 0.06, 0.4);
+    const screen = at(group(mesh(box(2.6, 1.7, 0.1, 0.06), C.grey, { metalness: 0.5 }), at(mesh(box(2.4, 1.5, 0.02, 0.02), C.blue), 0, 0, 0.055),
+      ...[0.4, 0.1, -0.2].map((y, i) => at(mesh(box(1.4 - i * 0.3, 0.12, 0.03, 0.05), C.white), -0.3 + i * 0.15, y, 0.07))), 0, 0.95, -0.42, -0.2);
+    const glass = group(at(mesh(tor(0.48, 0.1), C.orange), 0, 0, 0), at(mesh(cyl(0.45, 0.45, 0.04), C.white, { transmission: 1, thickness: 0.1, roughness: 0.02 }), 0, 0, 0, Math.PI / 2),
+      at(mesh(cap(0.11, 0.6), C.dark), 0.62, -0.62, 0, 0, 0, Math.PI / 4));
+    return group(base, screen, at(glass, 0.75, 1.05, 0.55, 0, -0.3, 0));
+  },
+  vinyl: () => { // crate of records
+    const crate = new THREE.Group(), w = C.orange;
+    crate.add(at(mesh(box(2.0, 0.1, 1.4, 0.04), w), 0, 0.05, 0));
+    for (const x of [-0.95, 0.95]) crate.add(at(mesh(box(0.1, 1.0, 1.4, 0.04), w), x, 0.5, 0));
+    for (const z of [-0.65, 0.65]) for (const y of [0.25, 0.75]) crate.add(at(mesh(box(2.0, 0.3, 0.1, 0.04), w), 0, y, z));
+    const sleeves = [C.purple, C.teal, C.pink, C.yellow, C.blue];
+    sleeves.forEach((c, i) => crate.add(at(mesh(box(0.06, 1.25, 1.25, 0.02), c), -0.7 + i * 0.3, 0.72, 0, 0, 0, -0.18)));
+    const rec = group(at(mesh(cyl(0.75, 0.75, 0.04, 96), '#1d1d26', { roughness: 0.15 }), 0, 0, 0, Math.PI / 2), at(mesh(cyl(0.26, 0.26, 0.05), C.red), 0, 0, 0, Math.PI / 2),
+      at(mesh(tor(0.5, 0.006), '#44445a'), 0, 0, 0.022), at(mesh(tor(0.62, 0.006), '#44445a'), 0, 0, 0.022));
+    crate.add(at(rec, 0.35, 1.55, 0.1, -0.15, -0.3, 0.2));
+    return at(crate, 0, 0, 0, 0, -0.45, 0);
+  },
+  star: () => at(mesh(ext(starShape(1.2, 0.55), 0.4, 0.2), C.yellow), 0, 1.3, 0, 0, -0.3, 0),
+};
+window.MODELS = Object.keys(MODELS);
+
+window.renderModel = (name) => {
+  const scene = new THREE.Scene(); scene.environment = envTex;
+  const key = new THREE.DirectionalLight(0xffffff, 1.6); key.position.set(3, 7, 4); key.castShadow = true;
+  key.shadow.mapSize.set(2048, 2048); key.shadow.radius = 14; key.shadow.blurSamples = 20;
+  Object.assign(key.shadow.camera, { left: -4, right: 4, top: 4, bottom: -4, near: 1, far: 20 });
+  scene.add(key);
+  const fill = new THREE.DirectionalLight(0xdde4ff, 0.6); fill.position.set(-5, 2, 1); scene.add(fill);
+  scene.add(new THREE.HemisphereLight(0xffffff, 0xd8d2ff, 0.4));
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(3.5, 64), new THREE.ShadowMaterial({ opacity: 0.2 }));
+  ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
+  const obj = MODELS[name](); scene.add(obj);
+  const bb = new THREE.Box3().setFromObject(obj), c = bb.getCenter(new THREE.Vector3()), sz = bb.getSize(new THREE.Vector3());
+  const cam = new THREE.PerspectiveCamera(26, 1, 0.1, 100);
+  const dist = Math.max(sz.x, sz.y, sz.z) * 3.4 + 2;
+  cam.position.set(c.x + dist * 0.42, c.y + dist * 0.42, c.z + dist * 0.8); cam.lookAt(c);
+  renderer.render(scene, cam);
+};
+window.ready = true;
+</script></body></html>
