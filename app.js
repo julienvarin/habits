@@ -289,26 +289,46 @@
     '🍬','☕','🍷','😴','🛏️','🦷','🧴','💊','✍️','📓','🧠','🎸',
     '🎨','💻','🗣️','📵','🧹','🪴','🐕','💰','🙏','☀️','🌙','⭐',
   ];
+  // [name pattern, emoji, 3D image in img/habits/] — the first match wins,
+  // so specific habits come before the generic words they contain.
   const ICON_GUESSES = [
-    [/read|book|lire|lecture/, '📚'], [/run|jog|cours/, '🏃'], [/meditat|breath|respir/, '🧘'],
-    [/stretch|yoga|étire|etire|mobility/, '🤸'], [/gym|workout|lift|push|pull|sport|muscu|abs|plank/, '💪'],
-    [/walk|steps|marche|pas/, '🚶'], [/bike|cycl|vélo|velo/, '🚴'], [/swim|nage|piscine/, '🏊'],
-    [/water|drink|eau|hydrat/, '💧'], [/sugar|sucre|sweet|candy/, '🍬'], [/smok|cigar|clope/, '🚭'],
-    [/alcohol|beer|wine|alcool|bière|vin/, '🍷'], [/coffee|café|cafe|caffeine/, '☕'],
-    [/veg|fruit|salad|eat|food|meal|cook|légume|manger|cuisine/, '🥗'],
-    [/sleep|bed|dormir|coucher|nap/, '😴'], [/floss|teeth|tooth|dent/, '🦷'], [/skin|cream|crème|sunscreen/, '🧴'],
-    [/vitamin|pill|supplement|medic|médic/, '💊'], [/journal|diary|journal/, '📓'], [/write|writ|écri|blog/, '✍️'],
-    [/learn|study|course|duolingo|langu|anglais|english|german|allemand|apprend/, '🧠'],
-    [/guitar|piano|music|musique|instrument|practice/, '🎸'], [/draw|paint|dessin|art|sketch/, '🎨'],
-    [/code|coding|program|dev/, '💻'], [/phone|screen|social|instagram|tiktok|écran/, '📵'],
-    [/clean|tidy|ménage|menage|range/, '🧹'], [/plant|garden|jardin/, '🪴'], [/dog|chien/, '🐕'],
-    [/money|budget|save|saving|spend|argent|épargne/, '💰'], [/pray|gratitude|grateful|gratitude|merci/, '🙏'],
-    [/morning|wake|réveil|matin|sun/, '☀️'], [/evening|night|soir/, '🌙'], [/call|family|friend|famille|ami/, '🗣️'],
+    [/morning health|shower|douche/, '☀️', 'morning-health'], [/(evening|night|soir).*(teeth|tooth|brush|dent)|(teeth|tooth|brush|dent).*(evening|night|soir)/, '🦷', 'teeth-night'],
+    [/shoulder|physio|rehab|kiné|kine|épaule|epaule/, '🤸', 'physio'], [/(run|jog|cours).*(gym|workout|sport)|(gym|workout|sport).*(run|jog)/, '🏃', 'run-gym'],
+    [/inspect/, '💻', 'inspect'], [/\bdig\b|vinyl|record|crate|discogs|disque/, '🎸', 'vinyl'],
+    [/\bbed\b|coucher/, '😴', 'sleep'],
+    [/read|book|lire|lecture/, '📚', 'read'], [/run|jog|cours/, '🏃', 'run'], [/meditat|breath|respir/, '🧘', 'meditate'],
+    [/stretch|yoga|étire|etire|mobility/, '🤸', 'stretch'], [/gym|workout|lift|push|pull|sport|muscu|abs|plank|exercis/, '💪', 'gym'],
+    [/walk|steps|marche|pas/, '🚶', 'walk'], [/bike|cycl|vélo|velo/, '🚴', 'bike'], [/swim|nage|piscine/, '🏊', 'swim'],
+    [/water|drink|eau|hydrat/, '💧', 'water'], [/sugar|sucre|sweet|candy/, '🍬', 'sugar'], [/smok|cigar|clope/, '🚭', 'smoke'],
+    [/alcohol|beer|wine|alcool|bière|vin/, '🍷', 'alcohol'], [/coffee|café|cafe|caffeine/, '☕', 'coffee'],
+    [/veg|fruit|salad|eat|food|meal|cook|légume|manger|cuisine/, '🥗', 'food'],
+    [/sleep|bed|dormir|coucher|nap/, '😴', 'sleep'], [/floss|teeth|tooth|dent/, '🦷', 'teeth'], [/skin|cream|crème|sunscreen/, '🧴', 'skin'],
+    [/vitamin|pill|supplement|medic|médic/, '💊', 'vitamin'], [/journal|diary|journal/, '📓', 'journal'], [/write|writ|écri|blog/, '✍️', 'write'],
+    [/learn|study|course|duolingo|langu|anglais|english|german|allemand|apprend/, '🧠', 'learn'],
+    [/guitar|piano|music|musique|instrument|practice/, '🎸', 'music'], [/draw|paint|dessin|art|sketch/, '🎨', 'art'],
+    [/code|coding|program|dev/, '💻', 'code'], [/phone|screen|social|instagram|tiktok|écran/, '📵', 'phone'],
+    [/clean|tidy|ménage|menage|range/, '🧹', 'clean'], [/plant|garden|jardin/, '🪴', 'plant'], [/dog|chien/, '🐕', 'dog'],
+    [/money|budget|save|saving|spend|argent|épargne/, '💰', 'money'], [/pray|gratitude|grateful|gratitude|merci/, '🙏', 'gratitude'],
+    [/morning|wake|réveil|matin|sun/, '☀️', 'morning'], [/evening|night|soir/, '🌙', 'evening'], [/call|family|friend|famille|ami/, '🗣️', 'call'],
   ];
+  // The 3D image for an emoji picked by hand in the habit editor.
+  const EMOJI_IMAGES = {
+    '📚':'read','🏃':'run','🧘':'meditate','💪':'gym','🚶':'walk','🚴':'bike','🏊':'swim','🤸':'stretch','💧':'water','🥗':'food','🍎':'apple',
+    '🚭':'smoke','🍬':'sugar','☕':'coffee','🍷':'alcohol','😴':'sleep','🛏️':'sleep','🦷':'teeth','🧴':'skin','💊':'vitamin','✍️':'write',
+    '📓':'journal','🧠':'learn','🎸':'music','🎨':'art','💻':'code','🗣️':'call','📵':'phone','🧹':'clean','🪴':'plant','🐕':'dog',
+    '💰':'money','🙏':'gratitude','☀️':'morning','🌙':'evening','⭐':'star',
+  };
   function guessIcon(name) {
     const n = String(name || '').toLowerCase();
     for (const [re, icon] of ICON_GUESSES) if (re.test(n)) return icon;
     return '⭐';
+  }
+  // The habit's 3D image: by name first, else by its emoji (null: keep the emoji).
+  function habitImage(h) {
+    const n = String(h.name || '').toLowerCase();
+    for (const [re, , img] of ICON_GUESSES) if (re.test(n)) return `img/habits/${img}.webp`;
+    const img = EMOJI_IMAGES[habitIcon(h)];
+    return img ? `img/habits/${img}.webp` : null;
   }
   function habitIcon(h) { return h.icon || guessIcon(h.name); }
 
@@ -507,14 +527,6 @@
   // ============================================================
   function dailyHabits() { return state.habits.filter(h => !isWeekly(h)); }
 
-  function weeklyTotals(monday) {
-    const weekly = state.habits.filter(isWeekly);
-    return {
-      done:  weekly.reduce((n, h) => n + Math.min(weekCount(h.id, monday), h.per_week), 0),
-      total: weekly.reduce((n, h) => n + h.per_week, 0),
-    };
-  }
-
   function timeLeftToday() {
     const now = new Date(), midnight = new Date(now);
     midnight.setHours(24, 0, 0, 0);
@@ -529,84 +541,15 @@
     return shown.length > 1 ? `${shown.slice(0, -1).join(', ')} and ${shown[shown.length - 1]}` : shown[0] || '';
   }
 
-  function ringSvg(frac) {
-    const C = 2 * Math.PI * 50, f = Math.max(0, Math.min(1, frac));
-    return `<svg viewBox="0 0 120 120" aria-hidden="true">
-      <circle cx="60" cy="60" r="50" class="ring-track"/>
-      ${f > 0 ? `<circle cx="60" cy="60" r="50" class="ring-fill" stroke-dasharray="${(f * C).toFixed(1)} ${C.toFixed(1)}"/>` : ''}
-    </svg>`;
-  }
-
-  function buildHero() {
-    if (!state.habits.length) {
-      return `
-        <div class="hero">
-          <div class="hero-top"><span class="hero-pill">Today</span></div>
-          <div class="hero-mid"><div class="hero-text">
-            <div class="hero-label">No habits yet</div>
-            <div class="hero-big">Start small</div>
-            <div class="hero-of">One thing a day, ticked here.</div>
-          </div></div>
-          <button class="hero-cta" data-action="add-habit">Add your first habit ›</button>
-        </div>`;
-    }
-    const today = todayStr();
-    const daily = dailyHabits();
-    const week  = weeklyTotals(mondayOf(new Date()));
-    // The ring follows daily habits; with only weekly ones, it follows the week.
-    const byDay = daily.length > 0;
-    const done  = byDay ? daily.filter(h => hasTick(h.id, today)).length : week.done;
-    const total = byDay ? daily.length : week.total;
-    const left  = total - done;
-    const daysLeft = 7 - ((new Date().getDay() + 6) % 7);
-
-    // Longest streak running right now, and the last 7 days against the 7 before.
-    let best = null;
-    for (const h of state.habits) {
-      const { streak } = streakLabel(h);
-      if (streak > 0 && (!best || streak > best.streak)) best = { h, streak };
-    }
-    const r7 = scopeRate(null, 0, 7), p7 = scopeRate(null, 7, 7);
-    const delta = r7 !== null && p7 !== null ? Math.round(r7 - p7) : null;
-
-    return `
-      <div class="hero">
-        <div class="hero-top">
-          <span class="hero-pill">${byDay ? 'Habits' : 'This week'}</span>
-        </div>
-        <div class="hero-mid">
-          <button class="ring" data-action="quick-check" aria-label="Check today's habits">${ringSvg(total ? done / total : 0)}
-            <div class="ring-label"><div class="ring-pct">${total ? Math.round((done / total) * 100) : 0}%</div><div class="ring-sub">done</div></div>
-          </button>
-          <div class="hero-text">
-            <div class="hero-big">${left ? `${left}<small> to go</small>` : 'All done'}</div>
-            <div class="hero-of">${left ? `of ${total} · ${byDay ? `${timeLeftToday()} left` : `${daysLeft} day${daysLeft > 1 ? 's' : ''} left`}` : 'Everything ticked. Nice.'}</div>
-            ${byDay && week.total ? `<div class="hero-of faint">Weekly goals: ${week.done}/${week.total} this week</div>` : ''}
-          </div>
-        </div>
-        <div class="hero-tiles">
-          <button class="hero-tile" data-action="go-stats" ${best ? `data-habit="${best.h.id}"` : ''}>
-            <div class="ht-label">Best streak${best ? ` · ${esc(best.h.name)}` : ''}</div>
-            <div class="ht-val">${best ? `${best.streak}<small> ${isWeekly(best.h) ? 'wk' : 'day'}${best.streak > 1 ? 's' : ''}</small>` : '—'}</div>
-          </button>
-          <button class="hero-tile" data-action="go-stats">
-            <div class="ht-label">Last 7 days</div>
-            <div class="ht-val${delta > 0 ? ' good' : delta < 0 ? ' bad' : ''}">${r7 === null ? '—' : `${Math.round(r7)}%`}${delta ? `<small> ${delta > 0 ? '▲' : '▼'}${Math.abs(delta)}</small>` : ''}</div>
-          </button>
-        </div>
-      </div>`;
-  }
-
   // ============================================================
   // Notifications: what needs you today. The bell lists them all
-  // (with an unread count); Today shows the most urgent as a tip.
+  // (with an unread count).
   // Each id is stable for as long as the situation lasts, so
   // "seen" and "dismissed" stick.
   // ============================================================
   const LS_SEEN = 'habits.alertsSeen', LS_HIDDEN = 'habits.tipsHidden';
   let alertList = [];
-  let quickOpen = false; // the sheet is showing the quick check (re-rendered on every tick)
-
+  
   function lsList(key) {
     try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; }
     catch { return []; }
@@ -698,29 +641,12 @@
     document.getElementById('home-bell').setAttribute('aria-label', n ? `Notifications, ${n} new` : 'Notifications');
   }
 
-  function buildTip() {
-    const hidden = lsList(LS_HIDDEN);
-    // The big task tile sits right below, so its reminder stays in the bell only.
-    const i = alertList.findIndex(a => !hidden.includes(a.id) && a.go !== 'bigtask');
-    if (i < 0) return '<div id="home-tip"></div>';
-    const more = alertList.length - 1;
-    return `
-      <div id="home-tip">
-        <div class="tip">
-          ${alertRowHtml(alertList[i], i, 'tip-btn')}
-          <button class="tip-x" data-action="tip-dismiss" data-i="${i}" aria-label="Dismiss">✕</button>
-        </div>
-        ${more > 0 ? `<button class="link tip-more" data-action="open-alerts">${more} more in notifications ›</button>` : ''}
-      </div>`;
-  }
-
   function openSheet(title, html) {
-    quickOpen = false;
     document.getElementById('sheet-title').textContent = title;
     document.getElementById('sheet-list').innerHTML = html;
     document.getElementById('sheet').hidden = false;
   }
-  function closeSheet() { quickOpen = false; document.getElementById('sheet').hidden = true; }
+  function closeSheet() { document.getElementById('sheet').hidden = true; }
   window.openSheet = openSheet;
   window.closeSheet = closeSheet;
 
@@ -766,9 +692,8 @@
 
     // Fixed slots, so the big task can be updated in place (see renderBigTask).
     if (!document.getElementById('today-bigtask')) {
-      main.innerHTML = '<div id="today-top"></div><div id="today-bigtask"></div><div id="today-weight"></div>';
+      main.innerHTML = '<div id="today-bigtask"></div><div id="today-weight"></div>';
     }
-    document.getElementById('today-top').innerHTML = buildHero() + buildTip();
     renderBigTask(document.getElementById('today-bigtask'));
     document.getElementById('today-weight').innerHTML = buildWeightCard();
   }
@@ -813,11 +738,23 @@
   // Quick check: the ✓ button's sheet, one square per habit to tick today
   // ============================================================
   // The short word under the emoji: the habit's own, else its name's first word.
+  // Filler words are skipped ("In bed before 1am" → "Bed"); "Not"/"No" keep
+  // the word after them ("Not smoking"), so the meaning survives.
+  const FILLER = new Set(['in', 'on', 'at', 'to', 'the', 'a', 'an', 'my', 'some', 'do', 'go', 'work', 'get']);
   function habitWord(h) {
-    return (h.short_label || '').trim() || String(h.name || '').trim().split(/\s+/)[0] || '';
+    const own = (h.short_label || '').trim();
+    if (own) return own;
+    const words = String(h.name || '').trim().split(/\s+/).filter(Boolean);
+    let i = 0;
+    while (i < words.length - 1 && FILLER.has(words[i].toLowerCase())) i++;
+    const w = words[i] || '';
+    const cap = x => x.charAt(0).toUpperCase() + x.slice(1);
+    if (/^(not|no)$/i.test(w) && words[i + 1]) return `${cap(w)} ${words[i + 1].toLowerCase()}`;
+    return cap(w);
   }
 
   function quickCheckHtml() {
+    if (state.loading) return '<div class="qc-loading" aria-label="Loading"></div>';
     if (!state.habits.length) {
       return `<div class="sheet-empty">
           <div class="sheet-empty-ico">🌱</div>
@@ -827,35 +764,91 @@
     }
     const today  = todayStr();
     const squares = state.habits.map(h => {
-      const on = hasTick(h.id, today);
+      const on = hasTick(h.id, today), img = habitImage(h);
       return `
         <button class="qc-sq${on ? ' on' : ''}" style="--c:${h.color}" data-action="quick-toggle" data-id="${h.id}"
                 aria-pressed="${on}" aria-label="${esc(h.name)}">
-          <span class="qc-mark">${esc(habitIcon(h))}</span>
+          ${img ? `<img class="qc-img" src="${img}" alt="" draggable="false" />` : `<span class="qc-mark">${esc(habitIcon(h))}</span>`}
           <span class="qc-word">${esc(habitWord(h))}</span>
           ${on ? '<span class="qc-check" aria-hidden="true">✓</span>' : ''}
         </button>`;
     }).join('');
-    return `<div class="qc-grid">${squares}</div>`;
+    return `<div class="qc-grid${state.habits.length > 6 ? ' many' : ''}">${squares}</div>`;
   }
 
+  // The cover: the quick check fills the screen when the app opens.
+  // Swipe it down (or tap the handle) to reveal the rest of the app;
+  // the ✓ button brings it back.
+  const cover = document.getElementById('cover');
+  let coverUp = true;
+
   function renderQuickCheck() {
-    if (!quickOpen) return;
     const today = todayStr();
     const daily = dailyHabits();
     const done  = daily.filter(h => hasTick(h.id, today)).length;
-    const title = !state.habits.length ? 'Today'
-      : daily.length && done === daily.length ? 'Today · all done'
-      : daily.length ? `Today · ${done} of ${daily.length}` : 'Today';
-    openSheet(title, quickCheckHtml());
-    quickOpen = true;
+    document.getElementById('cover-date').textContent =
+      new Date().toLocaleDateString(undefined, { weekday:'long', month:'short', day:'numeric' });
+    document.getElementById('cover-hello').textContent = greeting();
+    document.getElementById('cover-sub').textContent = !daily.length ? ''
+      : done === daily.length ? 'All done today' : `${done} of ${daily.length} done`;
+    document.getElementById('cover-grid').innerHTML = quickCheckHtml();
+  }
+
+  function setCover(up, animate = true) {
+    coverUp = up;
+    cover.classList.toggle('anim', animate);
+    cover.style.transform = up ? '' : 'translateY(105%)';
+    cover.setAttribute('aria-hidden', up ? 'false' : 'true');
+    cover.inert = !up;
+    document.documentElement.classList.toggle('cover-open', up);
   }
 
   function openQuickCheck() {
     haptic();
-    quickOpen = true;
-    renderQuickCheck();
+    closeSheet();
+    setCover(true);
   }
+
+  // Drag down to dismiss, like an iOS sheet: follows the finger, then
+  // either slides away (far or fast enough) or springs back.
+  (function initCoverDrag() {
+    const scroller = document.getElementById('cover-scroll');
+    let y0 = null, x0 = 0, t0 = 0, dy = 0, dragging = false, moved = false;
+    cover.addEventListener('touchstart', e => {
+      if (!coverUp || e.touches.length !== 1) return;
+      y0 = e.touches[0].clientY; x0 = e.touches[0].clientX; t0 = performance.now();
+      dy = 0; dragging = false; moved = false;
+    }, { passive: true });
+    cover.addEventListener('touchmove', e => {
+      if (y0 === null) return;
+      const d = e.touches[0].clientY - y0, dx = e.touches[0].clientX - x0;
+      if (!dragging) {
+        if (Math.abs(d) < 8 && Math.abs(dx) < 8) return;
+        moved = true;
+        // Only a downward pull from the top of the list drags the cover.
+        if (d > 0 && Math.abs(d) > Math.abs(dx) && scroller.scrollTop <= 0) {
+          dragging = true; y0 += 8; cover.classList.remove('anim'); cover.classList.add('dragging');
+        } else { y0 = null; return; }
+      }
+      e.preventDefault();
+      dy = Math.max(0, e.touches[0].clientY - y0);
+      cover.style.transform = `translateY(${dy}px)`;
+    }, { passive: false });
+    const end = () => {
+      if (y0 === null) return;
+      y0 = null;
+      if (!dragging) return;
+      cover.classList.remove('dragging');
+      const v = dy / Math.max(1, performance.now() - t0); // px per ms
+      if (dy > cover.offsetHeight * 0.22 || v > 0.6) { haptic(); setCover(false); }
+      else setCover(true);
+    };
+    cover.addEventListener('touchend', end);
+    cover.addEventListener('touchcancel', end);
+    // A drag isn't a tap: swallow the click that follows it.
+    cover.addEventListener('click', e => { if (moved) { e.stopPropagation(); e.preventDefault(); moved = false; } }, true);
+    document.getElementById('cover-handle').addEventListener('click', () => { haptic(); setCover(false); });
+  })();
 
   // ============================================================
   // Drag & drop reorder within sections
@@ -3017,7 +3010,7 @@
       statsMonth = 0;
       showView('stats');
     } else if (action === 'add-habit') {
-      if (quickOpen) closeSheet();
+      if (coverUp) setCover(false);
       openModal(null);
     } else if (action === 'quick-check') {
       openQuickCheck();
@@ -3026,9 +3019,6 @@
     } else if (action === 'alert') {
       const a = alertList[+el.dataset.i];
       if (a) { lsAdd(LS_SEEN, [a.id]); renderBell(); followAlert(a); }
-    } else if (action === 'tip-dismiss') {
-      const a = alertList[+el.dataset.i];
-      if (a) { haptic(); lsAdd(LS_HIDDEN, [a.id]); lsAdd(LS_SEEN, [a.id]); renderToday(); }
     } else if (action === 'open-alerts') {
       openAlerts();
     }
@@ -3075,8 +3065,13 @@
 
   // Re-fetch when the tab becomes visible / focused (picks up changes made on another device).
   // visibilitychange is more reliable than focus in iOS PWAs.
+  let hiddenAt = 0;
   function refetchOnReturn() {
+    if (document.visibilityState === 'hidden') { hiddenAt = Date.now(); return; }
     if (document.visibilityState !== 'visible') return;
+    // Back after a while: open on the quick check again, as on launch.
+    if (hiddenAt && Date.now() - hiddenAt > 5 * 60000 && document.getElementById('modal-root').innerHTML.trim() === '') setCover(true, false);
+    hiddenAt = 0;
     if (!state.loading) load();
     renderHomeHead();
     initMorningView();
@@ -3101,6 +3096,8 @@
   // Init
   // ============================================================
   renderHomeHead();
+  setCover(true, false);
+  renderQuickCheck();
   load();
   refreshReminderState().then(() => { if (!state.loading) renderToday(); });
   if (window.initTodo) window.initTodo();

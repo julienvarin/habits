@@ -2,3 +2,6 @@
 *.log
 .vscode/
 config.js
+tools/icons/node_modules/
+tools/icons/out/
+tools/icons/package*.json
